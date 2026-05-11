@@ -1,142 +1,150 @@
-import BottomTab from "@/components/talk/BottomTab";
+"use client";
+
+import { useEffect, useState } from "react";
+
 import Header from "@/components/talk/Header";
+import BottomTab from "@/components/talk/BottomTab";
 
-const records = [
-  {
-    date: "오늘 오후 2:10",
-    title: "겨울 음식 이야기",
-    summary:
-      "어머니와 함께 떡국을 먹던 기억을 떠올리셨어요.",
-    emotions: ["🌿 안정", "🌙 그리움"],
-    memories: ["🍲 떡국", "👩 어머니", "❄️ 겨울"],
-  },
+import {
+  getElderSessions,
+} from "@/services/sessionService";
 
-  {
-    date: "어제 오후 4:22",
-    title: "고향집 이야기",
-    summary:
-      "어린 시절 살던 집과 골목길 이야기를 나누셨어요.",
-    emotions: ["☀️ 편안", "🏠 익숙함"],
-    memories: ["🏠 고향집", "🚪 골목길"],
-  },
+const TEST_ELDER_ID =
+  "d3468297-537c-46a8-9736-90e26e22f678";
 
-  {
-    date: "3일 전 오전 11:40",
-    title: "학교 이야기",
-    summary:
-      "초등학교 운동장과 친구들 이야기를 하셨어요.",
-    emotions: ["😊 즐거움", "🌿 안정"],
-    memories: ["🏫 학교", "👫 친구"],
-  },
-];
+type Session = {
+  id: string;
+  started_at: string;
+  summary?: string;
+  detected_emotion?: string;
+  messages?: {
+    id: string;
+    role: string;
+    content: string;
+  }[];
+};
 
 export default function RecordsPage() {
+  const [sessions, setSessions] =
+    useState<Session[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  useEffect(() => {
+    const fetchSessions =
+      async () => {
+        try {
+          const data =
+            await getElderSessions(
+              TEST_ELDER_ID
+            );
+
+          setSessions(data || []);
+        } catch (error) {
+          console.error(error);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+    fetchSessions();
+  }, []);
+
   return (
-    <div className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#fff4e5_0%,#f6ead9_45%,#edf3e8_100%)] px-6 pt-6 text-[#3d3128]">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,#fff4e5_0%,#f6ead9_45%,#edf3e8_100%)] px-6 pt-6 text-[#3d3128]">
+      
       <div className="mx-auto flex min-h-screen max-w-md flex-col pb-32">
         
-        <Header subtitle="함께 나눈 이야기들을 모아봤어요" />
+        <Header subtitle="함께 나눈 이야기들이에요" />
 
-        <main className="mt-6 flex flex-1 flex-col gap-4">
-          
-          {/* 상단 카드 */}
-          <section className="rounded-[34px] bg-[#fffaf2]/92 p-6 shadow-[0_22px_60px_rgba(93,68,42,0.12)] ring-1 ring-white/90">
-            
-            <div className="inline-flex rounded-full bg-[#f2eadf] px-4 py-2 text-sm font-bold text-[#8a715c]">
-              최근 기억 흐름
+        <main className="flex flex-1 flex-col pt-8">
+
+          {loading && (
+            <div className="mt-10 text-center text-[#8a7463]">
+              기록을 불러오고 있어요...
             </div>
+          )}
 
-            <h2 className="mt-5 text-[30px] font-black leading-[1.4] tracking-tight">
-              최근에는
-              <br />
-              가족과 겨울에 대한
-              <br />
-              이야기가 많았어요
-            </h2>
+          {!loading &&
+            sessions.length === 0 && (
+              <div className="mt-16 rounded-[28px] bg-white/80 p-8 text-center shadow-sm">
+                
+                <p className="text-[18px] font-bold">
+                  아직 저장된 이야기가 없어요
+                </p>
 
-            <div className="mt-6 flex flex-wrap gap-3">
-              {[
-                "🍲 떡국",
-                "👩 어머니",
-                "🏠 고향집",
-                "❄️ 겨울",
-              ].map((item) => (
+                <p className="mt-3 text-sm text-[#8a7463]">
+                  첫 대화를 시작해보세요
+                </p>
+              </div>
+            )}
+
+          <div className="space-y-5">
+
+            {sessions.map((session) => {
+              const firstUserMessage =
+                session.messages?.find(
+                  (m) =>
+                    m.role === "user"
+                );
+
+              return (
                 <div
-                  key={item}
-                  className="rounded-full bg-[#f6efe4] px-4 py-3 text-[15px] font-bold text-[#6f5d50]"
+                  key={session.id}
+                  className="rounded-[30px] bg-white/88 p-6 shadow-[0_18px_50px_rgba(93,68,42,0.08)] ring-1 ring-white/90"
                 >
-                  {item}
-                </div>
-              ))}
-            </div>
-          </section>
+                  
+                  <div className="flex items-center justify-between">
+                    
+                    <div>
+                      <p className="text-sm text-[#8a7463]">
+                        {new Date(
+                          session.started_at
+                        ).toLocaleString()}
+                      </p>
 
-          {/* 기록 리스트 */}
-          <div className="space-y-4">
-            {records.map((record) => (
-              <section
-                key={record.date}
-                className="rounded-[30px] bg-white/88 p-5 shadow-[0_18px_50px_rgba(93,68,42,0.1)] ring-1 ring-white/90"
-              >
-                <div className="flex items-start justify-between">
-                  <div>
+                      <h3 className="mt-2 text-[22px] font-black leading-[1.4]">
+                        함께 나눈 이야기
+                      </h3>
+                    </div>
+
+                    <div className="rounded-full bg-[#edf4ec] px-3 py-1 text-xs font-bold text-[#6f9075]">
+                      {session.detected_emotion ||
+                        "편안함"}
+                    </div>
+                  </div>
+
+                  <div className="mt-5 rounded-[22px] bg-[#faf6ef] p-5">
+                    
                     <p className="text-sm font-bold text-[#8a7463]">
-                      {record.date}
+                      기억의 한 조각
                     </p>
 
-                    <h3 className="mt-2 text-[24px] font-black">
-                      {record.title}
-                    </h3>
+                    <p className="mt-3 text-[17px] leading-[1.8] text-[#5e5148]">
+                      {firstUserMessage
+                        ?.content ||
+                        "따뜻한 이야기를 나누셨어요."}
+                    </p>
                   </div>
 
-                  <div className="text-2xl">
-                    📖
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    
+                    <span className="rounded-full bg-[#f4eadb] px-3 py-1 text-sm text-[#7c6857]">
+                      #추억
+                    </span>
+
+                    <span className="rounded-full bg-[#edf4ec] px-3 py-1 text-sm text-[#6f9075]">
+                      #이야기
+                    </span>
+
+                    <span className="rounded-full bg-[#f8efe4] px-3 py-1 text-sm text-[#9c7554]">
+                      #기억
+                    </span>
                   </div>
                 </div>
-
-                <div className="mt-5 rounded-[24px] bg-[#f8f3ea] p-5">
-                  <p className="text-[16px] leading-[1.85] text-[#6f5d50]">
-                    {record.summary}
-                  </p>
-                </div>
-
-                {/* 감정 */}
-                <div className="mt-5">
-                  <p className="text-sm font-bold text-[#8a7463]">
-                    느껴진 감정
-                  </p>
-
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {record.emotions.map((emotion) => (
-                      <div
-                        key={emotion}
-                        className="rounded-full bg-[#edf4ec] px-4 py-2 text-sm font-bold text-[#6f9075]"
-                      >
-                        {emotion}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 기억 */}
-                <div className="mt-5">
-                  <p className="text-sm font-bold text-[#8a7463]">
-                    떠오른 기억
-                  </p>
-
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {record.memories.map((memory) => (
-                      <div
-                        key={memory}
-                        className="rounded-full bg-[#f6efe4] px-4 py-2 text-sm font-bold text-[#6f5d50]"
-                      >
-                        {memory}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </section>
-            ))}
+              );
+            })}
           </div>
         </main>
       </div>

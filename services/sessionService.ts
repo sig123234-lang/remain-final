@@ -224,3 +224,29 @@ export async function saveSessionSummary({
 
   return data;
 }
+
+export async function getElderSessions(
+  elderId: string
+) {
+  const { data, error } = await supabase
+    .from("sessions")
+    .select(`
+      *,
+      messages (*)
+    `)
+    .eq("elder_id", elderId)
+    .order("started_at", {
+      ascending: false,
+    });
+
+  if (error) {
+    console.error(
+      "세션 목록 조회 실패:",
+      error
+    );
+
+    throw error;
+  }
+
+  return data;
+}
