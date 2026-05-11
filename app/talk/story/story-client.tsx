@@ -20,16 +20,12 @@ export default function StoryClientPage({
   elderId: string;
 }) {
   const {
-    sessionId,
     currentQuestion,
     currentState,
-    isLoading,
-    isEndingSession,
     error,
     status,
     setStatus,
     processUserTurn,
-    finalizeSession,
   } = useSessionRuntime({
     elderId,
   });
@@ -45,6 +41,8 @@ export default function StoryClientPage({
     useState<string | null>(null);
   const spokenCommandRef =
     useRef<string | null>(null);
+  const activeCommandId =
+    currentState.activeCommandId;
 
   const speak = useCallback(
     (text: string) => {
@@ -174,8 +172,8 @@ export default function StoryClientPage({
 
   useEffect(() => {
     if (
-      !currentState.activeCommandId ||
-      currentState.activeCommandId ===
+      !activeCommandId ||
+      activeCommandId ===
         spokenCommandRef.current ||
       status === "speaking" ||
       status === "listening" ||
@@ -185,14 +183,14 @@ export default function StoryClientPage({
     }
 
     spokenCommandRef.current =
-      currentState.activeCommandId;
+      activeCommandId;
 
     setTimeout(() => {
       speak(currentQuestion);
     }, 300);
   }, [
     currentQuestion,
-    currentState.activeCommandId,
+    activeCommandId,
     speak,
     status,
   ]);
@@ -209,6 +207,7 @@ export default function StoryClientPage({
             <SeasonalOrb
               status={status}
               season="spring"
+              showText={false}
             />
           </div>
 
@@ -221,26 +220,9 @@ export default function StoryClientPage({
               {currentQuestion}
             </h3>
 
-            <p className="mt-6 text-[17px] leading-[1.8] text-[#6f5d50]">
-              {isLoading &&
-                "대화를 준비하고 있어요."}
-              {!isLoading &&
-                status === "waiting" &&
-                "준비되시면 시작해 주세요."}
-              {status === "speaking" &&
-                "제가 먼저 천천히 말씀드릴게요."}
-              {status === "listening" &&
-                "말씀을 듣고 있어요."}
-              {status === "thinking" &&
-                "말씀을 정리하고 있어요."}
-            </p>
-
             {(browserError || error) && (
               <div className="mt-6 rounded-[24px] bg-[#fff2ef] px-5 py-4 text-left shadow-sm ring-1 ring-[#f1d4c9]">
-                <p className="text-sm font-bold text-[#b36555]">
-                  대화 준비 안내
-                </p>
-                <p className="mt-2 text-sm leading-[1.7] text-[#7a564f]">
+                <p className="text-sm leading-[1.7] text-[#7a564f]">
                   {browserError || error}
                 </p>
               </div>
@@ -264,78 +246,6 @@ export default function StoryClientPage({
               status={status}
               onClick={handleVoiceButton}
             />
-          </div>
-
-          <div className="mt-8 w-full rounded-[26px] bg-white/75 p-5 shadow-sm ring-1 ring-white/90">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-black text-[#8a715c]">
-                현재 인터뷰 상태
-              </h3>
-
-              {sessionId && (
-                <span className="rounded-full bg-[#f4eadb] px-3 py-1 text-[11px] font-bold text-[#8a715c]">
-                  세션 {sessionId.slice(0, 8)}
-                </span>
-              )}
-            </div>
-
-            <div className="mt-4 space-y-2 text-sm text-[#5f5248]">
-              <p>
-                현재 턴:
-                <span className="ml-2 font-bold">
-                  {currentState.turnCount}
-                </span>
-              </p>
-
-              <p>
-                깊이 레벨:
-                <span className="ml-2 font-bold">
-                  L{currentState.depthLevel}
-                </span>
-              </p>
-
-              <p>
-                위험도:
-                <span className="ml-2 font-bold uppercase">
-                  {currentState.riskLevel}
-                </span>
-              </p>
-
-              <p>
-                현재 액션:
-                <span className="ml-2 font-bold">
-                  {currentState.action}
-                </span>
-              </p>
-            </div>
-
-            {currentState.facilitatorNote && (
-              <div className="mt-4 rounded-[18px] bg-[#faf6ef] p-4">
-                <p className="text-xs font-bold text-[#8a7463]">
-                  진행자 메모
-                </p>
-
-                <p className="mt-2 text-sm leading-[1.6] text-[#6f5d50]">
-                  {currentState.facilitatorNote}
-                </p>
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={() => {
-                void finalizeSession();
-              }}
-              disabled={
-                !sessionId ||
-                isEndingSession
-              }
-              className="mt-4 flex h-12 w-full items-center justify-center rounded-[20px] bg-[#f6efe5] text-sm font-bold text-[#6f5d50] transition hover:bg-[#efe5d8] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isEndingSession
-                ? "세션을 마무리하고 있어요"
-                : "세션 마무리"}
-            </button>
           </div>
         </main>
       </div>

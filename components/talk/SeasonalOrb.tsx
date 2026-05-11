@@ -15,6 +15,7 @@ type OrbSeason =
 type SeasonalOrbProps = {
   status?: OrbStatus;
   season?: OrbSeason;
+  showText?: boolean;
 };
 
 const seasonConfig = {
@@ -84,6 +85,7 @@ const statusConfig = {
 export default function SeasonalOrb({
   status = "waiting",
   season = "spring",
+  showText = true,
 }: SeasonalOrbProps) {
   const currentSeason =
     seasonConfig[season];
@@ -213,17 +215,17 @@ export default function SeasonalOrb({
           </div>
         </div>
 
-        {/* Text */}
-        <div className="mt-6 text-center">
-          
-          <h3 className="text-[22px] font-black text-[#4f4035]">
-            {current.title}
-          </h3>
+        {showText && (
+          <div className="mt-6 text-center">
+            <h3 className="text-[22px] font-black text-[#4f4035]">
+              {current.title}
+            </h3>
 
-          <p className="mt-2 text-[15px] text-[#8a7463]">
-            {current.subtitle}
-          </p>
-        </div>
+            <p className="mt-2 text-[15px] text-[#8a7463]">
+              {current.subtitle}
+            </p>
+          </div>
+        )}
       </div>
     </>
   );
