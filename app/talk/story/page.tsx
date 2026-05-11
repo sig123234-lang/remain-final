@@ -27,7 +27,7 @@ const firstQuestion =
   "초등학교 다니실 때 겨울 되면 자주 먹던 음식 기억나세요?";
 
 const TEST_ELDER_ID =
-  "d3468297-537c-46a8-9736-90e26e22f678";
+  "8dc55e51-7b82-4e4b-8331-1b6824ed153f";
 
 export default function StoryPage() {
   const [status, setStatus] =
