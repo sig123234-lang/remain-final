@@ -43,7 +43,7 @@ export default function AdminLoginPage() {
           </div>
 
           <Link
-            href="/admin/sessions/live"
+            href="/admin/live"
             className="mt-8 flex h-16 w-full items-center justify-center rounded-2xl bg-[#7f9f72] text-lg font-black text-white shadow-[0_16px_36px_rgba(99,125,86,0.25)]"
           >
             관리자 로그인

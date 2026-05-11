@@ -8,9 +8,7 @@ import BottomTab from "@/components/talk/BottomTab";
 import {
   getElderSessions,
 } from "@/services/sessionService";
-
-const TEST_ELDER_ID =
-  "d3468297-537c-46a8-9736-90e26e22f678";
+import { REMAIN_DEFAULT_ELDER_ID } from "@/lib/remain-config";
 
 type Session = {
   id: string;
@@ -37,7 +35,7 @@ export default function RecordsPage() {
         try {
           const data =
             await getElderSessions(
-              TEST_ELDER_ID
+              REMAIN_DEFAULT_ELDER_ID
             );
 
           setSessions(data || []);

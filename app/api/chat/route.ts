@@ -1,5 +1,7 @@
 import OpenAI from "openai";
 
+import type { ChatCompletionPayload } from "@/types/session";
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -10,6 +12,8 @@ export async function POST(req: Request) {
 
     const messages =
       body.messages || [];
+    const sessionState =
+      body.sessionState || {};
 
     console.log(
       "받은 대화:",
@@ -57,8 +61,31 @@ export async function POST(req: Request) {
   "tailType": "depth",
   "facilitatorNote": "진행자 참고 메모",
   "sessionSummaryUpdate": "짧은 요약",
-  "turnSummary": "현재 턴 요약"
+  "turnSummary": "현재 턴 요약",
+  "recommendations": [
+    {
+      "question": "진행자가 선택할 수 있는 추천 질문",
+      "rationale": "왜 이 질문이 좋은지",
+      "targetEmotion": "안정감",
+      "targetDepth": 2,
+      "targetMemory": "겨울 음식과 가족 식사",
+      "riskFlag": "low"
+    }
+  ]
 }
+`,
+          },
+          {
+            role: "system",
+            content: `
+현재 세션 상태:
+${JSON.stringify(sessionState)}
+
+세션 상태를 참고해:
+- 같은 기억 축을 이어가되 무리하게 해석하지 말 것
+- depthLevel, riskLevel, action을 실제로 업데이트할 것
+- 추천 질문 3개를 함께 생성할 것
+- 추천 질문은 진행자 협업 패널에서 사용할 수 있게 각기 다른 방향으로 만들 것
 `,
           },
 
@@ -79,9 +106,72 @@ export async function POST(req: Request) {
     );
 
     const parsed =
-      JSON.parse(raw);
+      JSON.parse(raw) as Partial<ChatCompletionPayload>;
 
-    return Response.json(parsed);
+    const normalized: ChatCompletionPayload = {
+      speech:
+        parsed.speech ||
+        "이야기를 조금 더 들려주세요.",
+      tts_text:
+        parsed.tts_text ||
+        parsed.speech ||
+        "이야기를 조금 더 들려주세요.",
+      depthLevel:
+        parsed.depthLevel || 1,
+      emotionDetected:
+        parsed.emotionDetected ||
+        "neutral",
+      riskLevel:
+        parsed.riskLevel || "low",
+      action:
+        parsed.action || "continue",
+      responsePattern:
+        parsed.responsePattern || "A",
+      questionType:
+        parsed.questionType || "P",
+      tailType:
+        parsed.tailType || "depth",
+      facilitatorNote:
+        parsed.facilitatorNote || "",
+      sessionSummaryUpdate:
+        parsed.sessionSummaryUpdate ||
+        "",
+      turnSummary:
+        parsed.turnSummary || "",
+      recommendations: Array.isArray(
+        parsed.recommendations
+      )
+        ? parsed.recommendations
+            .slice(0, 3)
+            .map(
+              (
+                recommendation,
+                index
+              ) => ({
+                question:
+                  recommendation.question ||
+                  `추천 질문 ${index + 1}`,
+                rationale:
+                  recommendation.rationale ||
+                  "직전 회상 흐름을 자연스럽게 잇기 위한 질문",
+                targetEmotion:
+                  recommendation.targetEmotion ||
+                  "안정감",
+                targetDepth:
+                  recommendation.targetDepth ||
+                  1,
+                targetMemory:
+                  recommendation.targetMemory ||
+                  "최근 회상 기억",
+                riskFlag:
+                  recommendation.riskFlag ||
+                  "low",
+              })
+            )
+        : [],
+    };
+
+    return Response.json(normalized);
   } catch (error) {
     console.error(
       "AI 응답 생성 실패:",
@@ -118,6 +208,8 @@ export async function POST(req: Request) {
 
         turnSummary:
           "오류 발생",
+
+        recommendations: [],
       },
       {
         status: 500,
