@@ -13,6 +13,16 @@ import SeasonalOrb from "@/components/talk/SeasonalOrb";
 import VoiceActionButton from "@/components/talk/VoiceActionButton";
 import { useBrowserSpeechTranscriber } from "@/hooks/useBrowserSpeechTranscriber";
 import { useSessionRuntime } from "@/hooks/useSessionRuntime";
+import {
+  getBodyTextClass,
+  getQuestionTextClass,
+  getSpeechRateValue,
+  loadTalkPreferences,
+  pickPreferredVoice,
+  PREFERENCES_UPDATED_EVENT,
+  TALK_PREFERENCES_KEY,
+  type TalkPreferences,
+} from "@/lib/preferences";
 
 export default function StoryClientPage({
   elderId,
@@ -39,10 +49,78 @@ export default function StoryClientPage({
   } = useBrowserSpeechTranscriber();
   const [browserError, setBrowserError] =
     useState<string | null>(null);
+  const [
+    preferences,
+    setPreferences,
+  ] = useState<TalkPreferences>(
+    loadTalkPreferences()
+  );
   const spokenCommandRef =
     useRef<string | null>(null);
   const activeCommandId =
     currentState.activeCommandId;
+
+  useEffect(() => {
+    const syncPreferences = () => {
+      setPreferences(
+        loadTalkPreferences()
+      );
+    };
+
+    const handleStorage = (
+      event: StorageEvent
+    ) => {
+      if (
+        event.key &&
+        event.key !==
+          TALK_PREFERENCES_KEY
+      ) {
+        return;
+      }
+
+      syncPreferences();
+    };
+
+    const handleCustomEvent =
+      (
+        event: Event
+      ) => {
+        const customEvent =
+          event as CustomEvent<{
+            key?: string;
+          }>;
+
+        if (
+          customEvent.detail?.key &&
+          customEvent.detail.key !==
+            TALK_PREFERENCES_KEY
+        ) {
+          return;
+        }
+
+        syncPreferences();
+      };
+
+    window.addEventListener(
+      "storage",
+      handleStorage
+    );
+    window.addEventListener(
+      PREFERENCES_UPDATED_EVENT,
+      handleCustomEvent
+    );
+
+    return () => {
+      window.removeEventListener(
+        "storage",
+        handleStorage
+      );
+      window.removeEventListener(
+        PREFERENCES_UPDATED_EVENT,
+        handleCustomEvent
+      );
+    };
+  }, []);
 
   const speak = useCallback(
     (text: string) => {
@@ -56,8 +134,21 @@ export default function StoryClientPage({
         new SpeechSynthesisUtterance(text);
 
       utterance.lang = "ko-KR";
-      utterance.rate = 0.82;
+      utterance.rate =
+        getSpeechRateValue(
+          preferences.speechRate
+        );
       utterance.pitch = 1;
+
+      const preferredVoice =
+        pickPreferredVoice(
+          preferences.voice
+        );
+
+      if (preferredVoice) {
+        utterance.voice =
+          preferredVoice;
+      }
 
       utterance.onstart = () => {
         setStatus("speaking");
@@ -76,7 +167,12 @@ export default function StoryClientPage({
         utterance
       );
     },
-    [setStatus, startListening]
+    [
+      preferences.speechRate,
+      preferences.voice,
+      setStatus,
+      startListening,
+    ]
   );
 
   const startListeningFromUi = () => {
@@ -196,6 +292,14 @@ export default function StoryClientPage({
   ]);
 
   const lastAnswer = transcript;
+  const questionTextClass =
+    getQuestionTextClass(
+      preferences.fontSize
+    );
+  const bodyTextClass =
+    getBodyTextClass(
+      preferences.fontSize
+    );
 
   return (
     <div className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#fff4e5_0%,#f6ead9_45%,#edf3e8_100%)] px-6 pt-6 text-[#3d3128]">
@@ -216,7 +320,9 @@ export default function StoryClientPage({
               이야기 도우미가 여쭤볼게요
             </p>
 
-            <h3 className="mt-5 text-[34px] font-black leading-[1.5] tracking-tight">
+            <h3
+              className={`mt-5 font-black leading-[1.5] tracking-tight ${questionTextClass}`}
+            >
               {currentQuestion}
             </h3>
 
@@ -234,7 +340,9 @@ export default function StoryClientPage({
                   들은 이야기
                 </p>
 
-                <p className="mt-2 text-[17px] leading-[1.7] text-[#6f5d50]">
+                <p
+                  className={`mt-2 leading-[1.7] text-[#6f5d50] ${bodyTextClass}`}
+                >
                   {lastAnswer}
                 </p>
               </div>
