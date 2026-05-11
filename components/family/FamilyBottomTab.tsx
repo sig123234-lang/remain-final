@@ -17,7 +17,11 @@ export default function FamilyBottomTab() {
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-white/70 bg-[#fffaf2]/92 px-3 pb-6 pt-3 backdrop-blur-xl">
       <div className="mx-auto flex max-w-md items-center justify-between">
         {tabs.map((tab) => {
-          const active = pathname === tab.href;
+          const active =
+            pathname === tab.href ||
+            pathname.startsWith(
+              `${tab.href}/`
+            );
 
           return (
             <Link

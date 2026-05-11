@@ -1,28 +1,98 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
 import FamilyBottomTab from "@/components/family/FamilyBottomTab";
+import { getElder } from "@/services/elderService";
+import { getRecentSessions } from "@/services/sessionService";
+import { REMAIN_DEFAULT_ELDER_ID } from "@/lib/remain-config";
 
-const memories = [
-  "🍲 떡국",
-  "🏠 고향집",
-  "👩 어머니",
-  "❄️ 겨울 아침",
-];
-
-const emotions = [
-  {
-    label: "안정",
-    emoji: "🌿",
-  },
-  {
-    label: "편안",
-    emoji: "☀️",
-  },
-  {
-    label: "그리움",
-    emoji: "🌙",
-  },
-];
+type RecentSessionRecord = {
+  id: string;
+  started_at: string;
+  detected_emotion?: string | null;
+  summary?: string | null;
+  session_summaries?:
+    | {
+        family_friendly_summary?: string | null;
+        keywords?: string[] | null;
+        emotions?: string[] | null;
+      }[]
+    | null;
+};
 
 export default function FamilyHomePage() {
+  const [displayName, setDisplayName] =
+    useState("어르신");
+  const [sessions, setSessions] =
+    useState<RecentSessionRecord[]>(
+      []
+    );
+
+  useEffect(() => {
+    const load = async () => {
+      const [elder, recentSessions] =
+        await Promise.all([
+          getElder(REMAIN_DEFAULT_ELDER_ID).catch(
+            () => null
+          ),
+          getRecentSessions(
+            REMAIN_DEFAULT_ELDER_ID
+          ).catch(() => []),
+        ]);
+
+      if (elder) {
+        setDisplayName(
+          elder.display_name ||
+            elder.full_name ||
+            "어르신"
+        );
+      }
+
+      setSessions(
+        (recentSessions ??
+          []) as RecentSessionRecord[]
+      );
+    };
+
+    void load();
+  }, []);
+
+  const latestSession = sessions[0];
+  const latestSummary =
+    latestSession?.session_summaries?.[0]
+      ?.family_friendly_summary ||
+    latestSession?.summary ||
+    "최근 대화가 아직 정리되지 않았어요.";
+
+  const memories = useMemo(() => {
+    const keywords =
+      latestSession?.session_summaries?.[0]
+        ?.keywords ?? [];
+
+    return keywords.slice(0, 4).map(
+      (keyword) => `#${keyword}`
+    );
+  }, [latestSession]);
+
+  const emotions = useMemo(() => {
+    const labels =
+      latestSession?.session_summaries?.[0]
+        ?.emotions?.slice(0, 3) ?? [];
+
+    return labels.map((label) => ({
+      label,
+      emoji:
+        label === "nostalgic"
+          ? "🌙"
+          : label === "positive"
+            ? "☀️"
+            : label === "sad"
+              ? "💧"
+              : "🌿",
+    }));
+  }, [latestSession]);
+
   return (
     <div className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#fff4e5_0%,#f6ead9_45%,#edf3e8_100%)] px-6 pt-6 text-[#3d3128]">
       <div className="mx-auto flex min-h-screen max-w-md flex-col pb-32">
@@ -57,7 +127,7 @@ export default function FamilyHomePage() {
                 </div>
 
                 <h2 className="mt-5 text-[30px] font-black leading-[1.42] tracking-tight">
-                  김영자 어르신은
+                  {displayName}은
                   <br />
                   오늘도 편안하게
                   <br />
@@ -78,7 +148,13 @@ export default function FamilyHomePage() {
                 </p>
 
                 <p className="mt-2 text-lg font-black">
-                  오늘 오후 2:10
+                  {latestSession
+                    ? new Date(
+                        latestSession.started_at
+                      ).toLocaleString(
+                        "ko-KR"
+                      )
+                    : "아직 기록 없음"}
                 </p>
               </div>
 
@@ -88,7 +164,9 @@ export default function FamilyHomePage() {
                 </p>
 
                 <p className="mt-2 text-lg font-black">
-                  안정적
+                  {latestSession
+                    ?.detected_emotion ||
+                    "안정적"}
                 </p>
               </div>
             </div>
@@ -115,14 +193,20 @@ export default function FamilyHomePage() {
             </div>
 
             <div className="mt-5 flex flex-wrap gap-3">
-              {memories.map((memory) => (
-                <div
-                  key={memory}
-                  className="rounded-full bg-[#f6efe4] px-4 py-3 text-[15px] font-bold text-[#6f5d50]"
-                >
-                  {memory}
+              {memories.length > 0 ? (
+                memories.map((memory) => (
+                  <div
+                    key={memory}
+                    className="rounded-full bg-[#f6efe4] px-4 py-3 text-[15px] font-bold text-[#6f5d50]"
+                  >
+                    {memory}
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-full bg-[#f6efe4] px-4 py-3 text-[15px] font-bold text-[#6f5d50]">
+                  #아직없음
                 </div>
-              ))}
+              )}
             </div>
           </section>
 
@@ -148,8 +232,7 @@ export default function FamilyHomePage() {
 
             <div className="mt-5 rounded-[26px] bg-[#f8f3ea] p-5">
               <p className="text-[17px] leading-[1.9] text-[#6f5d50]">
-                오늘은 어린 시절 겨울 음식 이야기를 나누셨어요.
-                어머니와 함께 떡국을 먹던 기억을 편안하게 떠올리셨어요.
+                {latestSummary}
               </p>
             </div>
           </section>
@@ -175,7 +258,15 @@ export default function FamilyHomePage() {
             </div>
 
             <div className="mt-5 flex gap-3">
-              {emotions.map((emotion) => (
+              {(emotions.length > 0
+                ? emotions
+                : [
+                    {
+                      label: "정리 중",
+                      emoji: "🌿",
+                    },
+                  ]
+              ).map((emotion) => (
                 <div
                   key={emotion.label}
                   className="flex flex-1 flex-col items-center rounded-[24px] bg-[#f8f3ea] px-3 py-4"
