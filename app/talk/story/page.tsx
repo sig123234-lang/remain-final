@@ -1,7 +1,5 @@
 import StoryClientPage from "./story-client";
 
-import { REMAIN_DEFAULT_ELDER_ID } from "@/lib/remain-config";
-
 export default async function StoryPage({
   searchParams,
 }: {
@@ -10,13 +8,10 @@ export default async function StoryPage({
   }>;
 }) {
   const params = await searchParams;
-  const elderId =
-    params.elderId ||
-    REMAIN_DEFAULT_ELDER_ID;
 
   return (
     <StoryClientPage
-      elderId={elderId}
+      elderId={params.elderId}
     />
   );
 }

@@ -114,3 +114,24 @@ export async function listEldersByIds(
 
   return (data ?? []) as ElderRecord[];
 }
+
+export async function resolveActiveElderId(
+  preferredElderId?: string | null
+) {
+  const elders = await listElders();
+
+  if (elders.length === 0) {
+    return null;
+  }
+
+  if (!preferredElderId) {
+    return elders[0].id;
+  }
+
+  const matchedElder = elders.find(
+    (elder) =>
+      elder.id === preferredElderId
+  );
+
+  return matchedElder?.id ?? elders[0].id;
+}

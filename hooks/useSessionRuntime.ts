@@ -12,6 +12,7 @@ import {
   ACTIVE_SESSION_STORAGE_KEY,
   REMAIN_FIRST_QUESTION,
 } from "@/lib/remain-config";
+import { resolveActiveElderId } from "@/services/elderService";
 import {
   addMessage,
   createInitialRuntimeState,
@@ -40,7 +41,7 @@ type AiStatus =
   | "thinking";
 
 interface UseSessionRuntimeParams {
-  elderId: string;
+  elderId?: string;
   firstQuestion?: string;
   facilityId?: string;
 }
@@ -50,6 +51,10 @@ export function useSessionRuntime({
   firstQuestion = REMAIN_FIRST_QUESTION,
   facilityId,
 }: UseSessionRuntimeParams) {
+  const [resolvedElderId, setResolvedElderId] =
+    useState<string | null>(
+      elderId ?? null
+    );
   const [sessionId, setSessionId] =
     useState<string | null>(null);
   const [messages, setMessages] =
@@ -76,7 +81,11 @@ export function useSessionRuntime({
     useState<AiStatus>("waiting");
   const handledCommandsRef =
     useRef<Set<string>>(new Set());
-  const sessionStorageKey = `${ACTIVE_SESSION_STORAGE_KEY}:${elderId}`;
+  const effectiveElderId =
+    resolvedElderId ?? elderId ?? null;
+  const sessionStorageKey = `${ACTIVE_SESSION_STORAGE_KEY}:${
+    effectiveElderId ?? "default"
+  }`;
 
   const currentQuestion =
     currentState.currentQuestion ||
@@ -164,7 +173,8 @@ export function useSessionRuntime({
       try {
         await saveSessionSummary({
           sessionId,
-          elderId,
+          elderId:
+            effectiveElderId ?? "",
           summary:
             currentState.sessionSummary,
           familyFriendlySummary:
@@ -194,7 +204,7 @@ export function useSessionRuntime({
       }
     }, [
       currentState,
-      elderId,
+      effectiveElderId,
       isEndingSession,
       sessionStorageKey,
       sessionId,
@@ -253,7 +263,9 @@ export function useSessionRuntime({
             if (sessionId) {
               await addMessage({
                 sessionId,
-                elderId,
+                elderId:
+                  effectiveElderId ??
+                  "",
                 role: "assistant",
                 content: question,
                 source:
@@ -326,7 +338,7 @@ export function useSessionRuntime({
       [
         currentQuestion,
         currentState,
-        elderId,
+        effectiveElderId,
         finalizeSession,
         sessionId,
       ]
@@ -377,42 +389,72 @@ export function useSessionRuntime({
       setError(null);
 
       try {
+        const nextElderId =
+          await resolveActiveElderId(
+            elderId
+          );
+
+        if (!nextElderId) {
+          setError(
+            "등록된 어르신이 없어 세션을 시작할 수 없어요. 관리자에서 먼저 어르신을 등록해 주세요."
+          );
+          return;
+        }
+
+        setResolvedElderId(
+          nextElderId
+        );
+
+        const nextSessionStorageKey = `${ACTIVE_SESSION_STORAGE_KEY}:${nextElderId}`;
         const storedSessionId =
           typeof window ===
           "undefined"
             ? null
             : window.sessionStorage.getItem(
-                sessionStorageKey
+                nextSessionStorageKey
               );
 
         if (storedSessionId) {
-          const snapshot =
-            await getSessionSnapshot(
-              storedSessionId
-            );
+          try {
+            const snapshot =
+              await getSessionSnapshot(
+                storedSessionId
+              );
+
+            if (
+              snapshot.session
+                .status === "active"
+            ) {
+              setSessionId(
+                storedSessionId
+              );
+              setMessages(
+                snapshot.messages
+              );
+              setRecommendations(
+                snapshot.recommendations
+              );
+              setCurrentState(
+                snapshot.session
+                  .current_state ??
+                  createInitialRuntimeState(
+                    firstQuestion
+                  )
+              );
+              setIsLoading(false);
+              return;
+            }
+          } catch {
+            // Clear invalid cached session ids and fall through to create a fresh session.
+          }
 
           if (
-            snapshot.session.status ===
-            "active"
+            typeof window !==
+            "undefined"
           ) {
-            setSessionId(
-              storedSessionId
+            window.sessionStorage.removeItem(
+              nextSessionStorageKey
             );
-            setMessages(
-              snapshot.messages
-            );
-            setRecommendations(
-              snapshot.recommendations
-            );
-            setCurrentState(
-              snapshot.session
-                .current_state ??
-                createInitialRuntimeState(
-                  firstQuestion
-                )
-            );
-            setIsLoading(false);
-            return;
           }
         }
 
@@ -423,7 +465,7 @@ export function useSessionRuntime({
 
         const session =
           await createSession({
-            elderId,
+            elderId: nextElderId,
             facilityId,
             initialState,
           });
@@ -431,7 +473,8 @@ export function useSessionRuntime({
         const openingMessage =
           await addMessage({
             sessionId: session.id,
-            elderId,
+            elderId:
+              nextElderId,
             role: "assistant",
             content: firstQuestion,
             source: "ai",
@@ -456,7 +499,7 @@ export function useSessionRuntime({
           "undefined"
         ) {
           window.sessionStorage.setItem(
-            sessionStorageKey,
+            nextSessionStorageKey,
             session.id
           );
         }
@@ -473,7 +516,6 @@ export function useSessionRuntime({
       elderId,
       facilityId,
       firstQuestion,
-      sessionStorageKey,
     ]);
 
   useEffect(() => {
@@ -569,7 +611,9 @@ export function useSessionRuntime({
         const userMessage =
           await addMessage({
             sessionId,
-            elderId,
+            elderId:
+              effectiveElderId ??
+              "",
             role: "user",
             content: cleanAnswer,
             source:
@@ -618,7 +662,9 @@ export function useSessionRuntime({
         const assistantMessage =
           await addMessage({
             sessionId,
-            elderId,
+            elderId:
+              effectiveElderId ??
+              "",
             role: "assistant",
             content: data.speech,
             emotion:
@@ -707,7 +753,7 @@ export function useSessionRuntime({
       [
         applyRealtimeMessage,
         currentState,
-        elderId,
+        effectiveElderId,
         messages,
         persistRuntimeState,
         sessionId,

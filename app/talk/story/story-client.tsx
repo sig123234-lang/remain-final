@@ -17,7 +17,7 @@ import { useSessionRuntime } from "@/hooks/useSessionRuntime";
 export default function StoryClientPage({
   elderId,
 }: {
-  elderId: string;
+  elderId?: string;
 }) {
   const {
     currentQuestion,
