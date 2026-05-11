@@ -160,6 +160,24 @@ export async function listActiveSessions() {
   return (data ?? []) as SessionRecord[];
 }
 
+export async function listSessions() {
+  const supabase =
+    getSupabaseBrowserClient();
+
+  const { data, error } = await supabase
+    .from("sessions")
+    .select(SESSION_SELECT)
+    .order("started_at", {
+      ascending: false,
+    });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? []) as SessionRecord[];
+}
+
 export async function addMessage({
   sessionId,
   elderId,

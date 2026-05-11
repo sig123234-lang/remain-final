@@ -76,6 +76,7 @@ export function useSessionRuntime({
     useState<AiStatus>("waiting");
   const handledCommandsRef =
     useRef<Set<string>>(new Set());
+  const sessionStorageKey = `${ACTIVE_SESSION_STORAGE_KEY}:${elderId}`;
 
   const currentQuestion =
     currentState.currentQuestion ||
@@ -185,7 +186,7 @@ export function useSessionRuntime({
           "undefined"
         ) {
           window.sessionStorage.removeItem(
-            ACTIVE_SESSION_STORAGE_KEY
+            sessionStorageKey
           );
         }
       } finally {
@@ -195,6 +196,7 @@ export function useSessionRuntime({
       currentState,
       elderId,
       isEndingSession,
+      sessionStorageKey,
       sessionId,
     ]);
 
@@ -358,12 +360,15 @@ export function useSessionRuntime({
           "undefined"
         ) {
           window.sessionStorage.setItem(
-            ACTIVE_SESSION_STORAGE_KEY,
+            sessionStorageKey,
             nextSessionId
           );
         }
       },
-      [firstQuestion]
+      [
+        firstQuestion,
+        sessionStorageKey,
+      ]
     );
 
   const initializeSession =
@@ -377,7 +382,7 @@ export function useSessionRuntime({
           "undefined"
             ? null
             : window.sessionStorage.getItem(
-                ACTIVE_SESSION_STORAGE_KEY
+                sessionStorageKey
               );
 
         if (storedSessionId) {
@@ -451,7 +456,7 @@ export function useSessionRuntime({
           "undefined"
         ) {
           window.sessionStorage.setItem(
-            ACTIVE_SESSION_STORAGE_KEY,
+            sessionStorageKey,
             session.id
           );
         }
@@ -468,6 +473,7 @@ export function useSessionRuntime({
       elderId,
       facilityId,
       firstQuestion,
+      sessionStorageKey,
     ]);
 
   useEffect(() => {
