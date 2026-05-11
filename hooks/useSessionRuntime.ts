@@ -46,6 +46,22 @@ interface UseSessionRuntimeParams {
   facilityId?: string;
 }
 
+interface LocalSessionSnapshot {
+  sessionId: string;
+  messages: SessionMessageRecord[];
+  recommendations: SessionRecommendationRecord[];
+  currentState: SessionRuntimeState;
+}
+
+function isLocalSessionId(
+  sessionId: string | null
+) {
+  return (
+    typeof sessionId === "string" &&
+    sessionId.startsWith("local:")
+  );
+}
+
 export function useSessionRuntime({
   elderId,
   firstQuestion = REMAIN_FIRST_QUESTION,
@@ -83,10 +99,138 @@ export function useSessionRuntime({
   const sessionStorageKey = `${ACTIVE_SESSION_STORAGE_KEY}:${
     effectiveElderId
   }`;
+  const localSessionStorageKey = `${sessionStorageKey}:snapshot`;
 
   const currentQuestion =
     currentState.currentQuestion ||
     firstQuestion;
+
+  const saveLocalSnapshot =
+    useCallback(
+      (
+        snapshot: LocalSessionSnapshot
+      ) => {
+        if (
+          typeof window ===
+          "undefined"
+        ) {
+          return;
+        }
+
+        window.sessionStorage.setItem(
+          sessionStorageKey,
+          snapshot.sessionId
+        );
+        window.sessionStorage.setItem(
+          localSessionStorageKey,
+          JSON.stringify(snapshot)
+        );
+      },
+      [
+        localSessionStorageKey,
+        sessionStorageKey,
+      ]
+    );
+
+  const loadLocalSnapshot =
+    useCallback(() => {
+      if (
+        typeof window ===
+        "undefined"
+      ) {
+        return null;
+      }
+
+      const rawSnapshot =
+        window.sessionStorage.getItem(
+          localSessionStorageKey
+        );
+
+      if (!rawSnapshot) {
+        return null;
+      }
+
+      try {
+        return JSON.parse(
+          rawSnapshot
+        ) as LocalSessionSnapshot;
+      } catch {
+        return null;
+      }
+    }, [localSessionStorageKey]);
+
+  const clearLocalSnapshot =
+    useCallback(() => {
+      if (
+        typeof window ===
+        "undefined"
+      ) {
+        return;
+      }
+
+      window.sessionStorage.removeItem(
+        localSessionStorageKey
+      );
+    }, [localSessionStorageKey]);
+
+  const createLocalSession =
+    useCallback(() => {
+      const initialState =
+        createInitialRuntimeState(
+          firstQuestion
+        );
+      const nextSessionId = `local:${crypto.randomUUID()}`;
+      const openingMessageId = `local-msg:${crypto.randomUUID()}`;
+      const openingMessage: SessionMessageRecord =
+        {
+          id: openingMessageId,
+          session_id: nextSessionId,
+          elder_id:
+            effectiveElderId,
+          role: "assistant",
+          content: firstQuestion,
+          source: "ai",
+          turn_index: 0,
+          sequence_in_turn: 0,
+          metadata: {
+            kind: "opening",
+          },
+          is_final: true,
+          created_at:
+            new Date().toISOString(),
+        };
+
+      const snapshot: LocalSessionSnapshot =
+        {
+          sessionId:
+            nextSessionId,
+          messages: [
+            openingMessage,
+          ],
+          recommendations:
+            [],
+          currentState:
+            initialState,
+        };
+
+      setSessionId(nextSessionId);
+      setCurrentState(
+        initialState
+      );
+      setMessages([
+        openingMessage,
+      ]);
+      setRecommendations([]);
+      saveLocalSnapshot(
+        snapshot
+      );
+
+      return snapshot;
+    }, [
+      effectiveElderId,
+      firstQuestion,
+      saveLocalSnapshot,
+    ]);
 
   const applyRealtimeMessage =
     useCallback(
@@ -196,10 +340,12 @@ export function useSessionRuntime({
             sessionStorageKey
           );
         }
+        clearLocalSnapshot();
       } finally {
         setIsEndingSession(false);
       }
     }, [
+      clearLocalSnapshot,
       currentState,
       effectiveElderId,
       isEndingSession,
@@ -394,6 +540,44 @@ export function useSessionRuntime({
               );
 
         if (storedSessionId) {
+          if (
+            isLocalSessionId(
+              storedSessionId
+            )
+          ) {
+            const localSnapshot =
+              loadLocalSnapshot();
+
+            if (
+              localSnapshot
+            ) {
+              setSessionId(
+                localSnapshot.sessionId
+              );
+              setMessages(
+                localSnapshot.messages
+              );
+              setRecommendations(
+                localSnapshot.recommendations
+              );
+              setCurrentState(
+                localSnapshot.currentState
+              );
+              setIsLoading(false);
+              return;
+            }
+
+            if (
+              typeof window !==
+              "undefined"
+            ) {
+              window.sessionStorage.removeItem(
+                sessionStorageKey
+              );
+            }
+            clearLocalSnapshot();
+          }
+
           try {
             const snapshot =
               await getSessionSnapshot(
@@ -484,18 +668,34 @@ export function useSessionRuntime({
           );
         }
       } catch (caughtError) {
-        setError(
+        const message =
           caughtError instanceof Error
             ? caughtError.message
-            : "세션을 준비하지 못했어요."
-        );
+            : "세션을 준비하지 못했어요.";
+
+        if (
+          message.includes(
+            "row-level security"
+          ) ||
+          message.includes(
+            "Unauthorized"
+          )
+        ) {
+          createLocalSession();
+          setError(null);
+        } else {
+          setError(message);
+        }
       } finally {
         setIsLoading(false);
       }
     }, [
+      clearLocalSnapshot,
+      createLocalSession,
       effectiveElderId,
       facilityId,
       firstQuestion,
+      loadLocalSnapshot,
       sessionStorageKey,
     ]);
 
@@ -512,6 +712,14 @@ export function useSessionRuntime({
 
   useEffect(() => {
     if (!sessionId) {
+      return;
+    }
+
+    if (
+      isLocalSessionId(
+        sessionId
+      )
+    ) {
       return;
     }
 
@@ -560,12 +768,34 @@ export function useSessionRuntime({
           return;
         }
 
+        if (
+          isLocalSessionId(
+            sessionId
+          )
+        ) {
+          saveLocalSnapshot(
+            {
+              sessionId,
+              messages,
+              recommendations,
+              currentState:
+                nextState,
+            }
+          );
+          return;
+        }
+
         await updateSessionCurrentState(
           sessionId,
           nextState
         );
       },
-      [sessionId]
+      [
+        messages,
+        recommendations,
+        saveLocalSnapshot,
+        sessionId,
+      ]
     );
 
   const processUserTurn =
@@ -588,6 +818,210 @@ export function useSessionRuntime({
 
         const nextTurnCount =
           currentState.turnCount + 1;
+
+        if (
+          isLocalSessionId(
+            sessionId
+          )
+        ) {
+          const createdAt =
+            new Date().toISOString();
+          const userMessage: SessionMessageRecord =
+            {
+              id: `local-msg:${crypto.randomUUID()}`,
+              session_id:
+                sessionId,
+              elder_id:
+                effectiveElderId,
+              role: "user",
+              content:
+                cleanAnswer,
+              source:
+                "browser-stt",
+              turn_index:
+                nextTurnCount,
+              sequence_in_turn: 0,
+              metadata: {
+                kind: "elder-answer",
+              },
+              is_final: true,
+              created_at:
+                createdAt,
+            };
+
+          const updatedMessages = [
+            ...messages,
+            userMessage,
+          ];
+
+          setMessages(
+            updatedMessages
+          );
+
+          const completionMessages =
+            updatedMessages.map(
+              (message) => ({
+                role: message.role,
+                content:
+                  message.content,
+              })
+            );
+
+          const response = await fetch(
+            "/api/chat",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+              body: JSON.stringify(
+                {
+                  messages:
+                    completionMessages,
+                  sessionState:
+                    currentState,
+                }
+              ),
+            }
+          );
+
+          const data =
+            (await response.json()) as ChatCompletionPayload;
+
+          const assistantMessage: SessionMessageRecord =
+            {
+              id: `local-msg:${crypto.randomUUID()}`,
+              session_id:
+                sessionId,
+              elder_id:
+                effectiveElderId,
+              role: "assistant",
+              content:
+                data.speech,
+              emotion:
+                data.emotionDetected,
+              risk_level:
+                data.riskLevel,
+              source: "ai",
+              turn_index:
+                nextTurnCount,
+              sequence_in_turn: 1,
+              metadata: {
+                facilitatorNote:
+                  data.facilitatorNote,
+                responsePattern:
+                  data.responsePattern,
+                questionType:
+                  data.questionType,
+                tailType:
+                  data.tailType,
+              },
+              is_final: true,
+              created_at:
+                new Date().toISOString(),
+            };
+
+          const nextState: SessionRuntimeState =
+            {
+              ...currentState,
+              turnCount:
+                nextTurnCount,
+              depthLevel:
+                data.depthLevel || 1,
+              emotionDetected:
+                data.emotionDetected ||
+                "neutral",
+              riskLevel:
+                data.riskLevel ||
+                "low",
+              action:
+                data.action ||
+                "continue",
+              facilitatorNote:
+                data.facilitatorNote ||
+                "",
+              currentQuestion:
+                data.speech ||
+                currentState.currentQuestion,
+              sessionSummary:
+                data.sessionSummaryUpdate ||
+                currentState.sessionSummary,
+              turnSummary:
+                data.turnSummary ||
+                "",
+              lastSpeaker:
+                "assistant",
+            };
+
+          const nextRecommendations: SessionRecommendationRecord[] =
+            (data.recommendations ||
+              []).map(
+              (
+                recommendation,
+                index
+              ) => ({
+                id: `local-rec:${crypto.randomUUID()}`,
+                session_id:
+                  sessionId,
+                question_text:
+                  recommendation.question,
+                rationale:
+                  recommendation.rationale,
+                target_emotion:
+                  recommendation.targetEmotion,
+                target_depth:
+                  recommendation.targetDepth,
+                target_memory:
+                  recommendation.targetMemory,
+                risk_flag:
+                  recommendation.riskFlag,
+                rank:
+                  index + 1,
+                status:
+                  "suggested",
+                created_by:
+                  "ai",
+                created_at:
+                  new Date().toISOString(),
+              })
+            );
+
+          setMessages([
+            ...updatedMessages,
+            assistantMessage,
+          ]);
+          setRecommendations(
+            nextRecommendations
+          );
+          setCurrentState(
+            nextState
+          );
+          saveLocalSnapshot(
+            {
+              sessionId,
+              messages: [
+                ...updatedMessages,
+                assistantMessage,
+              ],
+              recommendations:
+                nextRecommendations,
+              currentState:
+                nextState,
+            }
+          );
+          setStatus("waiting");
+
+          return {
+            aiMessage:
+              data.speech,
+            ttsText:
+              data.tts_text ||
+              data.speech,
+            state: nextState,
+            assistantMessage,
+          };
+        }
 
         const userMessage =
           await addMessage({
@@ -733,6 +1167,7 @@ export function useSessionRuntime({
         applyRealtimeMessage,
         currentState,
         effectiveElderId,
+        saveLocalSnapshot,
         messages,
         persistRuntimeState,
         sessionId,
