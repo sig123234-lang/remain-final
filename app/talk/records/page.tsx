@@ -34,9 +34,9 @@ export default function RecordsPage() {
       async () => {
         try {
           const data =
-            await getElderSessions(
+            (await getElderSessions(
               REMAIN_DEFAULT_ELDER_ID
-            );
+            )) as Session[] | null;
 
           setSessions(data || []);
         } catch (error) {

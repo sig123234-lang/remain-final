@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { agentDebugLog } from "@/lib/agent-debug-log";
 import {
   dbAddMessage,
   dbCreateSession,
@@ -114,15 +113,6 @@ function serializeError(
 export async function POST(
   request: Request
 ) {
-  // #region agent log
-  agentDebugLog({
-    location:
-      "app/api/session/write/route.ts:POST",
-    message: "session write request received",
-    hypothesisId: "H3",
-    data: {},
-  });
-  // #endregion
 
   let body: SessionWriteBody;
 
@@ -149,17 +139,6 @@ export async function POST(
     supabase =
       getSupabaseServiceRoleClient();
   } catch (configError) {
-    // #region agent log
-    agentDebugLog({
-      location:
-        "app/api/session/write/route.ts:config",
-      message: "service role client failed",
-      hypothesisId: "H3",
-      data: {
-        ...serializeError(configError),
-      },
-    });
-    // #endregion
 
     return NextResponse.json(
       {
@@ -304,19 +283,6 @@ export async function POST(
   } catch (error) {
     const serialized =
       serializeError(error);
-
-    // #region agent log
-    agentDebugLog({
-      location:
-        "app/api/session/write/route.ts:catch",
-      message: "session write op failed",
-      hypothesisId: "H1",
-      data: {
-        op: (body as SessionWriteBody).op,
-        ...serialized,
-      },
-    });
-    // #endregion
 
     return NextResponse.json(
       { error: serialized.message },

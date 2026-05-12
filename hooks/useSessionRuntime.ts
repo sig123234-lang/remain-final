@@ -8,7 +8,6 @@ import {
   useState,
 } from "react";
 
-import { agentDebugLog } from "@/lib/agent-debug-log";
 import {
   ACTIVE_SESSION_STORAGE_KEY,
   REMAIN_DEFAULT_ELDER_ID,
@@ -34,33 +33,6 @@ import type {
   SessionRecommendationRecord,
   SessionRuntimeState,
 } from "@/types/session";
-
-function serializeInitError(
-  caughtError: unknown
-) {
-  if (
-    caughtError &&
-    typeof caughtError === "object"
-  ) {
-    const err = caughtError as {
-      message?: string;
-      code?: string;
-      details?: string;
-    };
-
-    return {
-      message:
-        err.message ??
-        String(caughtError),
-      code: err.code,
-      details: err.details,
-    };
-  }
-
-  return {
-    message: String(caughtError),
-  };
-}
 
 type AiStatus =
   | "waiting"
@@ -344,19 +316,6 @@ export function useSessionRuntime({
               sessionStorageKey
             );
 
-      // #region agent log
-      agentDebugLog({
-        location:
-          "useSessionRuntime.ts:initializeSession:enter",
-        message: "session init enter",
-        hypothesisId: "H5",
-        data: {
-          effectiveElderId,
-          hasStoredId: Boolean(storedSessionId),
-        },
-      });
-      // #endregion
-
       if (storedSessionId) {
         try {
           const snapshot =
@@ -379,18 +338,10 @@ export function useSessionRuntime({
             setIsLoading(false);
             return;
           }
-        } catch (restoreError) {
+        } catch {
           // 저장된 세션 ID 가 더 이상 유효하지 않거나 RLS 로 SELECT 가 막혔을 때
           // (서버 경유 API 와 달리 SELECT 는 브라우저 키로 가야 한다)
           // → 캐시를 비우고 새 세션을 만든다.
-          agentDebugLog({
-            location:
-              "useSessionRuntime.ts:initializeSession:restoreFailed",
-            message:
-              "getSessionSnapshot failed for stored id; will create a fresh session",
-            hypothesisId: "H4",
-            data: serializeInitError(restoreError),
-          });
         }
 
         if (typeof window !== "undefined") {
@@ -403,26 +354,10 @@ export function useSessionRuntime({
       const initialState =
         createInitialRuntimeState(firstQuestion);
 
-      agentDebugLog({
-        location:
-          "useSessionRuntime.ts:initializeSession:beforeCreate",
-        message: "about to createSession",
-        hypothesisId: "H1",
-        data: { effectiveElderId },
-      });
-
       const session = await createSession({
         elderId: effectiveElderId,
         facilityId,
         initialState,
-      });
-
-      agentDebugLog({
-        location:
-          "useSessionRuntime.ts:initializeSession:afterCreate",
-        message: "createSession ok",
-        hypothesisId: "H2",
-        data: { sessionId: session.id },
       });
 
       const openingMessage = await addMessage({
@@ -434,14 +369,6 @@ export function useSessionRuntime({
         turnIndex: 0,
         sequenceInTurn: 0,
         metadata: { kind: "opening" },
-      });
-
-      agentDebugLog({
-        location:
-          "useSessionRuntime.ts:initializeSession:afterOpeningMsg",
-        message: "opening addMessage ok",
-        hypothesisId: "H2",
-        data: { messageId: openingMessage.id },
       });
 
       setSessionId(session.id);
@@ -460,16 +387,6 @@ export function useSessionRuntime({
         caughtError instanceof Error
           ? caughtError.message
           : "세션을 준비하지 못했어요.";
-      const serialized =
-        serializeInitError(caughtError);
-
-      agentDebugLog({
-        location:
-          "useSessionRuntime.ts:initializeSession:catch",
-        message: "session init failed",
-        hypothesisId: "H1",
-        data: serialized,
-      });
 
       setError(message);
     } finally {
@@ -580,17 +497,6 @@ export function useSessionRuntime({
           messages: updatedMessages,
           sessionState: currentState,
         }),
-      });
-
-      agentDebugLog({
-        location:
-          "useSessionRuntime.ts:processUserTurn:chatHttp",
-        message: "chat api response",
-        hypothesisId: "H6",
-        data: {
-          status: response.status,
-          ok: response.ok,
-        },
       });
 
       if (!response.ok) {

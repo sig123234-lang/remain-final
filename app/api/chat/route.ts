@@ -1,6 +1,5 @@
 import OpenAI from "openai";
 
-import { agentDebugLog } from "@/lib/agent-debug-log";
 import type { ChatCompletionPayload } from "@/types/session";
 
 const openai = new OpenAI({
@@ -180,22 +179,6 @@ ${JSON.stringify(sessionState)}
 
     return Response.json(normalized);
   } catch (error) {
-    const errMsg =
-      error instanceof Error
-        ? error.message
-        : String(error);
-
-    // #region agent log
-    agentDebugLog({
-      location: "app/api/chat/route.ts:catch",
-      message: "chat completion failed",
-      hypothesisId: "H6",
-      data: {
-        errSnippet: errMsg.slice(0, 200),
-      },
-    });
-    // #endregion
-
     console.error(
       "AI 응답 생성 실패:",
       error

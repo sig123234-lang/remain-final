@@ -7,20 +7,19 @@ import { listActiveSessions } from "@/services/sessionService";
 import { subscribeToActiveSessions } from "@/services/sessionRealtime";
 import type { SessionRecord } from "@/types/session";
 
+const POLL_INTERVAL_MS = 10_000;
+
 function upsertSession(
   sessions: SessionRecord[],
   nextSession: SessionRecord
 ) {
-  const existingIndex =
-    sessions.findIndex(
-      (session) =>
-        session.id === nextSession.id
-    );
+  const existingIndex = sessions.findIndex(
+    (session) => session.id === nextSession.id
+  );
 
   if (existingIndex >= 0) {
     const nextSessions = [...sessions];
-    nextSessions[existingIndex] =
-      nextSession;
+    nextSessions[existingIndex] = nextSession;
     return nextSessions;
   }
 
@@ -28,47 +27,66 @@ function upsertSession(
 }
 
 export default function AdminLivePage() {
-  const [sessions, setSessions] =
-    useState<SessionRecord[]>([]);
-  const [isLoading, setIsLoading] =
-    useState(true);
-  const [error, setError] =
-    useState<string | null>(null);
+  const [sessions, setSessions] = useState<
+    SessionRecord[]
+  >([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(
+    null
+  );
 
   useEffect(() => {
+    let cancelled = false;
+
     const load = async () => {
       try {
-        const data =
-          await listActiveSessions();
+        const data = await listActiveSessions();
+        if (cancelled) return;
         setSessions(data);
         setError(null);
       } catch (caughtError) {
+        if (cancelled) return;
         setError(
           caughtError instanceof Error
             ? caughtError.message
             : "진행 세션을 불러오지 못했어요."
         );
       } finally {
-        setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
 
     void load();
 
-    return subscribeToActiveSessions(
+    // 운영 DB sessions 테이블이 anon SELECT 를 RLS 로 막고 있어 Supabase realtime 채널
+    // 은 변경 이벤트를 어드민 클라이언트에 전달하지 못한다. (RLS 통과한 행만 push)
+    // 그래서 best-effort realtime + 10초 폴링 백업 둘 다 건다.
+    const pollId = window.setInterval(() => {
+      void load();
+    }, POLL_INTERVAL_MS);
+
+    const unsubscribe = subscribeToActiveSessions(
       (session) => {
+        if (cancelled) return;
         setSessions((previous) =>
           upsertSession(
             previous,
             session
           ).filter(
             (currentSession) =>
-              currentSession.status ===
-              "active"
+              currentSession.status === "active"
           )
         );
       }
     );
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(pollId);
+      unsubscribe();
+    };
   }, []);
 
   return (

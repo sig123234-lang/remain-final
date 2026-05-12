@@ -33,14 +33,16 @@ export function useLiveSession(
     useState<string | null>(null);
 
   const hydrate = useCallback(
-    async () => {
-      setIsLoading(true);
+    async ({
+      quiet = false,
+    }: { quiet?: boolean } = {}) => {
+      if (!quiet) {
+        setIsLoading(true);
+      }
 
       try {
         const nextSnapshot =
-          await getSessionSnapshot(
-            sessionId
-          );
+          await getSessionSnapshot(sessionId);
 
         setSnapshot(nextSnapshot);
         setError(null);
@@ -51,7 +53,9 @@ export function useLiveSession(
             : "세션을 불러오지 못했어요."
         );
       } finally {
-        setIsLoading(false);
+        if (!quiet) {
+          setIsLoading(false);
+        }
       }
     },
     [sessionId]
@@ -63,8 +67,15 @@ export function useLiveSession(
         void hydrate();
       }, 0);
 
+    // 운영 RLS 가 anon SELECT 를 막아 realtime 으로 변경 이벤트가 안 들어온다.
+    // 진행자 UI 가 죽지 않도록 7초 간격으로 quiet hydrate.
+    const pollId = window.setInterval(() => {
+      void hydrate({ quiet: true });
+    }, 7_000);
+
     return () => {
       window.clearTimeout(timeoutId);
+      window.clearInterval(pollId);
     };
   }, [hydrate]);
 
