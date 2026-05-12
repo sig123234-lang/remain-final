@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useState,
+} from "react";
 
 import Header from "@/components/talk/Header";
 import BottomTab from "@/components/talk/BottomTab";
@@ -23,19 +26,31 @@ type Session = {
 };
 
 export default function RecordsPage() {
+  const elderId =
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(
+          window.location.search
+        ).get("elderId") ??
+        REMAIN_DEFAULT_ELDER_ID;
   const [sessions, setSessions] =
     useState<Session[]>([]);
-
   const [loading, setLoading] =
     useState(true);
 
   useEffect(() => {
+    if (!elderId) {
+      return;
+    }
+
     const fetchSessions =
       async () => {
+        setLoading(true);
+
         try {
           const data =
             (await getElderSessions(
-              REMAIN_DEFAULT_ELDER_ID
+              elderId
             )) as Session[] | null;
 
           setSessions(data || []);
@@ -46,8 +61,8 @@ export default function RecordsPage() {
         }
       };
 
-    fetchSessions();
-  }, []);
+    void fetchSessions();
+  }, [elderId]);
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,#fff4e5_0%,#f6ead9_45%,#edf3e8_100%)] px-6 pt-6 text-[#3d3128]">

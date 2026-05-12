@@ -13,6 +13,7 @@ export interface ElderRecord {
   facility_name?: string | null;
   diagnosis?: string | null;
   note?: string | null;
+  entry_code?: string | null;
   is_active: boolean;
   created_at: string;
   updated_at?: string | null;

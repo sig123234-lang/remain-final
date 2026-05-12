@@ -1,5 +1,7 @@
 import BottomTab from "@/components/talk/BottomTab";
 import Header from "@/components/talk/Header";
+import { dbGetElder } from "@/lib/db-read-ops";
+import { getSupabaseServiceRoleClient } from "@/lib/supabase/admin";
 
 const memories = [
   "🍲 떡국",
@@ -23,7 +25,52 @@ const emotions = [
   },
 ];
 
-export default function TodayPage() {
+function getTalkDisplayName(
+  fullName: string,
+  displayName?: string | null
+) {
+  if (displayName?.trim()) {
+    return displayName;
+  }
+
+  return fullName.endsWith("어르신")
+    ? fullName
+    : `${fullName} 어르신`;
+}
+
+export default async function TodayPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    elderId?: string;
+  }>;
+}) {
+  const params = await searchParams;
+  const elderId = params.elderId;
+  let elderName = "김영자 어르신";
+
+  if (elderId) {
+    try {
+      const supabase =
+        getSupabaseServiceRoleClient();
+      const elder = await dbGetElder(
+        supabase,
+        elderId
+      );
+
+      elderName = getTalkDisplayName(
+        elder.full_name,
+        elder.display_name
+      );
+    } catch {
+      elderName = "김영자 어르신";
+    }
+  }
+
+  const storyHref = elderId
+    ? `/talk/story?elderId=${elderId}`
+    : "/talk/story";
+
   return (
     <div className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#fff4e5_0%,#f6ead9_45%,#edf3e8_100%)] px-6 pt-6 text-[#3d3128]">
       <div className="mx-auto flex min-h-screen max-w-md flex-col pb-32">
@@ -42,7 +89,7 @@ export default function TodayPage() {
                 </div>
 
                 <h2 className="mt-5 text-[30px] font-black leading-[1.4] tracking-tight">
-                  김영자 어르신은
+                  {elderName}은
                   <br />
                   오늘도 편안하게
                   <br />
@@ -177,7 +224,7 @@ export default function TodayPage() {
 
           {/* 시작 버튼 */}
           <a
-            href="/talk/story"
+            href={storyHref}
             className="mt-2 flex h-20 items-center justify-center rounded-[34px] bg-[#8ba77c] text-[22px] font-black text-white shadow-[0_18px_42px_rgba(99,125,86,0.3)]"
           >
             오늘 이야기 이어가기

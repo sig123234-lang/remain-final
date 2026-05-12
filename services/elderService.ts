@@ -1,8 +1,12 @@
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import type {
   CreateElderParams,
   ElderRecord,
 } from "@/types/elder";
+
+export interface ElderLoginResult {
+  id: string;
+  displayName: string;
+}
 
 async function dbRead<T>(
   body: Record<string, unknown>
@@ -35,46 +39,47 @@ async function dbRead<T>(
   return payload.data as T;
 }
 
+async function postJson<T>(
+  url: string,
+  body: object,
+  fallbackMessage: string
+): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const payload = (await response
+    .json()
+    .catch(() => ({}))) as {
+    data?: T;
+    error?: string;
+  };
+
+  if (!response.ok) {
+    throw new Error(
+      payload.error || fallbackMessage
+    );
+  }
+
+  return payload.data as T;
+}
+
 export async function listElders() {
   return dbRead<ElderRecord[]>({
     op: "listElders",
   });
 }
 
-/**
- * `createElder` 만 운영 DB 스키마 (`name`/`status`) 와 코드 (`full_name`/`is_active`)
- * 사이의 차이가 INSERT 단에서 직접 부딪힌다. 운영 elders 테이블은
- * `cognitive_level` / `preferred_voice` 같은 NOT NULL 컬럼이 추가로 있을 수 있어
- * 브라우저 클라이언트로 그대로 INSERT 하면 깨진다. 어르신 등록 화면을 다시 살릴
- * 때 별도 admin write API 로 옮길 예정. 지금은 호출이 없으면 그대로 두고,
- * 호출 시 명시적으로 막아 어디서 깨지는지 즉시 알 수 있게 한다.
- */
 export async function createElder(
   params: CreateElderParams
 ): Promise<ElderRecord> {
-  const supabase = getSupabaseBrowserClient();
-
-  const { data, error } = await supabase
-    .from("elders")
-    .insert({
-      full_name: params.fullName,
-      display_name: params.displayName,
-      age: params.age,
-      birth_year: params.birthYear,
-      gender: params.gender,
-      facility_name: params.facilityName,
-      diagnosis: params.diagnosis,
-      note: params.note,
-      is_active: true,
-    })
-    .select("*")
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as ElderRecord;
+  return postJson<ElderRecord>(
+    "/api/admin/elders",
+    params,
+    "어르신 등록에 실패했어요."
+  );
 }
 
 export async function getElder(elderId: string) {
@@ -82,6 +87,16 @@ export async function getElder(elderId: string) {
     op: "getElder",
     elderId,
   });
+}
+
+export async function findElderByEntryCode(
+  entryCode: string
+) {
+  return postJson<ElderLoginResult>(
+    "/api/talk/login",
+    { entryCode },
+    "입장 코드를 확인하지 못했어요."
+  );
 }
 
 export async function listEldersByIds(

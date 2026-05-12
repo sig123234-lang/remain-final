@@ -201,6 +201,17 @@ export default function AdminElderlyNewPage() {
                 className="mt-2 h-14 w-full rounded-2xl border border-[#eadfce] bg-[#faf7f1] px-4 outline-none focus:border-[#8ba77c]"
               />
             </label>
+
+            <label className="block md:col-span-2">
+              <span className="text-sm font-bold text-[#8a715c]">
+                입장 코드
+              </span>
+              <input
+                value="등록 후 자동 발급됩니다"
+                readOnly
+                className="mt-2 h-14 w-full rounded-2xl border border-dashed border-[#d7ccb9] bg-[#f7f4ee] px-4 text-[#8a7463] outline-none"
+              />
+            </label>
           </div>
 
           <label className="mt-5 block">
@@ -234,6 +245,11 @@ export default function AdminElderlyNewPage() {
               className="mt-2 h-36 w-full rounded-2xl border border-[#eadfce] bg-[#faf7f1] p-4 outline-none focus:border-[#8ba77c]"
             />
           </label>
+
+          <div className="mt-5 rounded-2xl bg-[#f7f4ee] p-4 text-sm leading-6 text-[#6f5d50]">
+            입장 코드는 등록과 동시에 자동 발급됩니다.
+            등록 후 어르신 관리 목록에서 바로 확인할 수 있어요.
+          </div>
 
           {error && (
             <div className="mt-5 rounded-2xl bg-[#fff3ef] p-4 text-sm text-[#8a5f57]">

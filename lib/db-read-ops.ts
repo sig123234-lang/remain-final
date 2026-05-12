@@ -1,7 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  mapElderRow,
+  type RawElderRow,
+} from "@/lib/elder-db-ops";
 import { SESSION_SELECT } from "@/lib/session-db-ops";
-import type { ElderRecord } from "@/types/elder";
 import type {
   SessionCommandRecord,
   SessionMessageRecord,
@@ -21,78 +24,6 @@ import type {
  * 어느 쪽 스키마든 컬럼 누락 에러가 나지 않게, 행을 통째로 받아서
  * 코드가 기대하는 ElderRecord 모양으로 매핑한다.
  */
-type RawElderRow = Record<string, unknown> & {
-  id: string;
-  created_at: string;
-};
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0
-    ? value
-    : null;
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" ? value : null;
-}
-
-function asBoolean(
-  value: unknown,
-  fallback: boolean
-): boolean {
-  return typeof value === "boolean"
-    ? value
-    : fallback;
-}
-
-function mapElderRow(row: RawElderRow): ElderRecord {
-  const name =
-    asString(row.full_name) ??
-    asString((row as { name?: unknown }).name) ??
-    "이름 없음";
-  const displayName =
-    asString(row.display_name) ?? name;
-  const status = asString(
-    (row as { status?: unknown }).status
-  );
-  const isActive =
-    asBoolean(
-      (row as { is_active?: unknown }).is_active,
-      // production 스키마는 is_active 가 없고 status 로 활성 여부를 표현
-      status === null ? true : status === "active"
-    );
-  const gender = asString(row.gender);
-  const elderGender =
-    gender === "male" ||
-    gender === "female" ||
-    gender === "other"
-      ? gender
-      : null;
-
-  return {
-    id: row.id,
-    full_name: name,
-    display_name: displayName,
-    age: asNumber(row.age),
-    birth_year: asNumber(row.birth_year),
-    gender: elderGender,
-    facility_name:
-      asString(row.facility_name) ??
-      asString(
-        (row as { facility_id?: unknown }).facility_id
-      ),
-    diagnosis: asString(row.diagnosis),
-    note:
-      asString(row.note) ??
-      asString(
-        (row as { life_memo?: unknown }).life_memo
-      ),
-    is_active: isActive,
-    created_at: row.created_at,
-    updated_at:
-      asString(row.updated_at) ?? null,
-  };
-}
 
 async function selectElders(client: SupabaseClient) {
   const { data, error } = await client

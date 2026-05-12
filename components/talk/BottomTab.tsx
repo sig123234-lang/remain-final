@@ -1,7 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import {
+  usePathname,
+  useSearchParams,
+} from "next/navigation";
+import { Suspense } from "react";
 
 const tabs = [
   {
@@ -26,7 +30,11 @@ const tabs = [
   },
 ];
 
-export default function BottomTab() {
+function BottomTabNav({
+  elderId,
+}: {
+  elderId?: string | null;
+}) {
   const pathname = usePathname();
 
   return (
@@ -34,11 +42,14 @@ export default function BottomTab() {
       <div className="mx-auto flex max-w-md items-center justify-between">
         {tabs.map((tab) => {
           const active = pathname === tab.href;
+          const href = elderId
+            ? `${tab.href}?elderId=${elderId}`
+            : tab.href;
 
           return (
             <Link
               key={tab.href}
-              href={tab.href}
+              href={href}
               className={`flex min-w-[72px] flex-col items-center justify-center rounded-2xl px-3 py-2 transition-all ${
                 active
                   ? "bg-[#edf4ec] text-[#6f9075]"
@@ -57,5 +68,23 @@ export default function BottomTab() {
         })}
       </div>
     </nav>
+  );
+}
+
+function BottomTabContent() {
+  const searchParams = useSearchParams();
+  const elderId =
+    searchParams.get("elderId");
+
+  return <BottomTabNav elderId={elderId} />;
+}
+
+export default function BottomTab() {
+  return (
+    <Suspense
+      fallback={<BottomTabNav elderId={null} />}
+    >
+      <BottomTabContent />
+    </Suspense>
   );
 }

@@ -10,6 +10,12 @@ import { listElders } from "@/services/elderService";
 import type { ElderRecord } from "@/types/elder";
 
 export default function AdminElderlyPage() {
+  const createdElderId =
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(
+          window.location.search
+        ).get("created");
   const [elders, setElders] = useState<
     ElderRecord[]
   >([]);
@@ -82,7 +88,11 @@ export default function AdminElderlyPage() {
           {elders.map((elder) => (
             <div
               key={elder.id}
-              className="rounded-[28px] bg-white p-6 shadow-sm"
+              className={`rounded-[28px] bg-white p-6 shadow-sm ${
+                createdElderId === elder.id
+                  ? "ring-2 ring-[#8ba77c]"
+                  : ""
+              }`}
             >
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
@@ -104,6 +114,21 @@ export default function AdminElderlyPage() {
                     {elder.diagnosis ||
                       "진단 정보 없음"}
                   </p>
+
+                  <div className="mt-4 inline-flex flex-wrap items-center gap-2 rounded-full bg-[#edf4ec] px-4 py-2 text-sm font-semibold text-[#5f7b62]">
+                    <span>입장 코드</span>
+                    <span className="font-black tracking-[0.16em]">
+                      {elder.entry_code ||
+                        "미발급"}
+                    </span>
+                  </div>
+
+                  {createdElderId ===
+                    elder.id && (
+                    <p className="mt-3 text-sm font-semibold text-[#6f9075]">
+                      새 입장 코드가 발급되었습니다.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap gap-2">
