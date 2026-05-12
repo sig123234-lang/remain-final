@@ -1,4 +1,5 @@
 import {
+  createHash,
   createHmac,
   timingSafeEqual,
 } from "node:crypto";
@@ -30,15 +31,15 @@ export function verifyPassword(
   if (!secret) {
     return false;
   }
-  // 같은 길이 보장을 위해 SHA-256 다이제스트 비교
-  const expected = createHmac("sha256", secret)
-    .update("password-check")
+  // candidate 와 secret 을 각각 SHA-256 으로 다이제스트해서 같은 길이로 만든 뒤
+  // timing-safe 비교. 길이 차이가 입력에서 새지 않게 하는 표준 패턴.
+  const expectedHash = createHash("sha256")
+    .update(secret)
     .digest();
-  const provided = createHmac("sha256", secret)
+  const providedHash = createHash("sha256")
     .update(candidate)
     .digest();
-  // candidate 가 secret 과 같다면 두 HMAC 은 같다.
-  return timingSafeEqual(expected, provided);
+  return timingSafeEqual(expectedHash, providedHash);
 }
 
 function signPayload(payload: string): string {
