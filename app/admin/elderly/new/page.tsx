@@ -3,6 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import {
+  deriveAgeFromBirthDate,
+  deriveBirthYear,
+  normalizeEntryCode,
+} from "@/lib/elder-utils";
 import { createElder } from "@/services/elderService";
 import type { ElderGender } from "@/types/elder";
 
@@ -12,8 +17,9 @@ export default function AdminElderlyNewPage() {
     useState("");
   const [displayName, setDisplayName] =
     useState("");
-  const [age, setAge] = useState("");
-  const [birthYear, setBirthYear] =
+  const [entryCode, setEntryCode] =
+    useState("");
+  const [birthDate, setBirthDate] =
     useState("");
   const [gender, setGender] =
     useState<ElderGender>("female");
@@ -26,6 +32,14 @@ export default function AdminElderlyNewPage() {
     useState<string | null>(null);
   const [isSaving, setIsSaving] =
     useState(false);
+  const derivedAge =
+    birthDate
+      ? deriveAgeFromBirthDate(birthDate)
+      : null;
+  const derivedBirthYear =
+    birthDate
+      ? deriveBirthYear(birthDate)
+      : null;
 
   const handleSubmit = async (
     event: React.FormEvent<HTMLFormElement>
@@ -37,6 +51,18 @@ export default function AdminElderlyNewPage() {
       return;
     }
 
+    if (!entryCode.trim()) {
+      setError("입장 코드를 입력해 주세요.");
+      return;
+    }
+
+    if (!birthDate || derivedAge === null) {
+      setError(
+        "생년월일을 올바르게 입력해 주세요."
+      );
+      return;
+    }
+
     setIsSaving(true);
     setError(null);
 
@@ -44,14 +70,14 @@ export default function AdminElderlyNewPage() {
       const elder =
         await createElder({
           fullName: fullName.trim(),
+          entryCode,
+          birthDate,
           displayName:
             displayName.trim() || undefined,
-          age: age
-            ? Number(age)
-            : undefined,
-          birthYear: birthYear
-            ? Number(birthYear)
-            : undefined,
+          age:
+            derivedAge ?? undefined,
+          birthYear:
+            derivedBirthYear ?? undefined,
           gender,
           facilityName:
             facilityName.trim() ||
@@ -128,34 +154,37 @@ export default function AdminElderlyNewPage() {
 
             <label className="block">
               <span className="text-sm font-bold text-[#8a715c]">
-                나이
+                입장 코드
               </span>
               <input
-                value={age}
+                value={entryCode}
                 onChange={(event) => {
-                  setAge(
-                    event.target.value
+                  setEntryCode(
+                    normalizeEntryCode(
+                      event.target.value
+                    )
                   );
                 }}
-                inputMode="numeric"
-                placeholder="84"
-                className="mt-2 h-14 w-full rounded-2xl border border-[#eadfce] bg-[#faf7f1] px-4 outline-none focus:border-[#8ba77c]"
+                placeholder="예: HAPPY84"
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                className="mt-2 h-14 w-full rounded-2xl border border-[#eadfce] bg-[#faf7f1] px-4 uppercase outline-none focus:border-[#8ba77c]"
               />
             </label>
 
             <label className="block">
               <span className="text-sm font-bold text-[#8a715c]">
-                출생년도
+                생년월일
               </span>
               <input
-                value={birthYear}
+                value={birthDate}
                 onChange={(event) => {
-                  setBirthYear(
+                  setBirthDate(
                     event.target.value
                   );
                 }}
-                inputMode="numeric"
-                placeholder="1941"
+                type="date"
                 className="mt-2 h-14 w-full rounded-2xl border border-[#eadfce] bg-[#faf7f1] px-4 outline-none focus:border-[#8ba77c]"
               />
             </label>
@@ -204,11 +233,16 @@ export default function AdminElderlyNewPage() {
 
             <label className="block md:col-span-2">
               <span className="text-sm font-bold text-[#8a715c]">
-                입장 코드
+                나이
               </span>
               <input
-                value="등록 후 자동 발급됩니다"
+                value={
+                  derivedAge !== null
+                    ? `${derivedAge}세`
+                    : ""
+                }
                 readOnly
+                placeholder="생년월일을 입력하면 자동 계산됩니다"
                 className="mt-2 h-14 w-full rounded-2xl border border-dashed border-[#d7ccb9] bg-[#f7f4ee] px-4 text-[#8a7463] outline-none"
               />
             </label>
@@ -247,8 +281,8 @@ export default function AdminElderlyNewPage() {
           </label>
 
           <div className="mt-5 rounded-2xl bg-[#f7f4ee] p-4 text-sm leading-6 text-[#6f5d50]">
-            입장 코드는 등록과 동시에 자동 발급됩니다.
-            등록 후 어르신 관리 목록에서 바로 확인할 수 있어요.
+            입장 코드는 직접 정해서 등록합니다.
+            영문과 숫자만 사용하면 로그인 화면에서 그대로 쓸 수 있어요.
           </div>
 
           {error && (

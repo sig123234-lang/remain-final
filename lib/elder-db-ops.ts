@@ -1,7 +1,11 @@
-import { randomInt } from "node:crypto";
-
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  deriveAgeFromBirthDate,
+  deriveBirthYear,
+  normalizeBirthDate,
+  normalizeEntryCode,
+} from "@/lib/elder-utils";
 import type {
   CreateElderParams,
   ElderRecord,
@@ -17,6 +21,7 @@ export type RawElderRow = Record<
 
 type ElderColumnShape = {
   hasAge: boolean;
+  hasBirthDate: boolean;
   hasBirthYear: boolean;
   hasCognitiveLevel: boolean;
   hasDiagnosis: boolean;
@@ -40,7 +45,11 @@ type ElderColumnShape = {
 
 const ENTRY_CODE_PREFIX = "RM";
 const ENTRY_CODE_DIGITS = 6;
-const ENTRY_CODE_RETRIES = 12;
+const META_ENTRY_CODE_PREFIX =
+  "[[remain-entry-code:";
+const META_BIRTH_DATE_PREFIX =
+  "[[remain-birth-date:";
+const META_SUFFIX = "]]";
 
 let elderColumnsPromise:
   | Promise<ElderColumnShape>
@@ -65,18 +74,144 @@ function asBoolean(
     : fallback;
 }
 
-export function normalizeEntryCode(
+function serializeMetaLine(
+  prefix: string,
   value: string
 ) {
-  return value
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
+  return `${prefix}${value}${META_SUFFIX}`;
+}
+
+function extractEmbeddedElderMeta(
+  rawMemo: string | null
+) {
+  if (!rawMemo) {
+    return {
+      birthDate: null,
+      entryCode: null,
+      note: null,
+    };
+  }
+
+  const lines = rawMemo.split("\n");
+  let entryCode: string | null = null;
+  let birthDate: string | null = null;
+  const contentLines: string[] = [];
+
+  for (const line of lines) {
+    if (
+      line.startsWith(
+        META_ENTRY_CODE_PREFIX
+      ) &&
+      line.endsWith(META_SUFFIX)
+    ) {
+      const nextEntryCode =
+        normalizeEntryCode(
+          line.slice(
+            META_ENTRY_CODE_PREFIX.length,
+            -META_SUFFIX.length
+          )
+        );
+
+      entryCode =
+        nextEntryCode || entryCode;
+      continue;
+    }
+
+    if (
+      line.startsWith(
+        META_BIRTH_DATE_PREFIX
+      ) &&
+      line.endsWith(META_SUFFIX)
+    ) {
+      const nextBirthDate =
+        normalizeBirthDate(
+          line.slice(
+            META_BIRTH_DATE_PREFIX.length,
+            -META_SUFFIX.length
+          )
+        );
+
+      birthDate =
+        nextBirthDate || birthDate;
+      continue;
+    }
+
+    contentLines.push(line);
+  }
+
+  const note = contentLines
+    .join("\n")
+    .trim();
+
+  return {
+    birthDate,
+    entryCode,
+    note: note || null,
+  };
+}
+
+function buildStoredMemo(
+  note: string | undefined,
+  metadata: {
+    birthDate?: string | null;
+    entryCode?: string | null;
+  }
+) {
+  const lines: string[] = [];
+
+  if (metadata.entryCode) {
+    lines.push(
+      serializeMetaLine(
+        META_ENTRY_CODE_PREFIX,
+        metadata.entryCode
+      )
+    );
+  }
+
+  if (metadata.birthDate) {
+    lines.push(
+      serializeMetaLine(
+        META_BIRTH_DATE_PREFIX,
+        metadata.birthDate
+      )
+    );
+  }
+
+  if (note?.trim()) {
+    lines.push(note.trim());
+  }
+
+  return lines.length > 0
+    ? lines.join("\n")
+    : undefined;
 }
 
 export function mapElderRow(
   row: RawElderRow,
   fallbackEntryCode?: string | null
 ): ElderRecord {
+  const rawMemo =
+    asString(row.note) ??
+    asString(
+      (row as { life_memo?: unknown }).life_memo
+    );
+  const embeddedMeta =
+    extractEmbeddedElderMeta(rawMemo);
+  const birthDate =
+    normalizeBirthDate(
+      asString(
+        (row as { birth_date?: unknown })
+          .birth_date
+      ) ?? ""
+    ) ?? embeddedMeta.birthDate;
+  const derivedAge =
+    birthDate
+      ? deriveAgeFromBirthDate(birthDate)
+      : null;
+  const derivedBirthYear =
+    birthDate
+      ? deriveBirthYear(birthDate)
+      : null;
   const name =
     asString(row.full_name) ??
     asString((row as { name?: unknown }).name) ??
@@ -103,8 +238,11 @@ export function mapElderRow(
     id: row.id,
     full_name: name,
     display_name: displayName,
-    age: asNumber(row.age),
-    birth_year: asNumber(row.birth_year),
+    age: derivedAge ?? asNumber(row.age),
+    birth_date: birthDate,
+    birth_year:
+      derivedBirthYear ??
+      asNumber(row.birth_year),
     gender: elderGender,
     facility_name:
       asString(row.facility_name) ??
@@ -112,13 +250,10 @@ export function mapElderRow(
         (row as { facility_id?: unknown }).facility_id
       ),
     diagnosis: asString(row.diagnosis),
-    note:
-      asString(row.note) ??
-      asString(
-        (row as { life_memo?: unknown }).life_memo
-      ),
+    note: embeddedMeta.note,
     entry_code:
       asString(row.entry_code) ??
+      embeddedMeta.entryCode ??
       fallbackEntryCode ??
       null,
     is_active: isActive,
@@ -231,6 +366,7 @@ async function loadElderColumns(
 ) {
   const [
     hasAge,
+    hasBirthDate,
     hasBirthYear,
     hasCognitiveLevel,
     hasDiagnosis,
@@ -252,6 +388,7 @@ async function loadElderColumns(
     hasUpdatedAt,
   ] = await Promise.all([
     hasElderColumn(client, "age"),
+    hasElderColumn(client, "birth_date"),
     hasElderColumn(client, "birth_year"),
     hasElderColumn(client, "cognitive_level"),
     hasElderColumn(client, "diagnosis"),
@@ -275,6 +412,7 @@ async function loadElderColumns(
 
   return {
     hasAge,
+    hasBirthDate,
     hasBirthYear,
     hasCognitiveLevel,
     hasDiagnosis,
@@ -312,50 +450,27 @@ async function getElderColumns(
   return elderColumnsPromise;
 }
 
-function createEntryCode() {
-  return `${ENTRY_CODE_PREFIX}${String(
-    randomInt(0, 10 ** ENTRY_CODE_DIGITS)
-  ).padStart(ENTRY_CODE_DIGITS, "0")}`;
-}
-
-async function generateUniqueEntryCode(
-  client: SupabaseClient
-) {
-  for (
-    let attempt = 0;
-    attempt < ENTRY_CODE_RETRIES;
-    attempt += 1
-  ) {
-    const entryCode = createEntryCode();
-    const { data, error } = await client
-      .from("elders")
-      .select("id")
-      .eq("entry_code", entryCode)
-      .limit(1);
-
-    if (error) {
-      throw error;
-    }
-
-    if ((data ?? []).length === 0) {
-      return entryCode;
-    }
-  }
-
-  throw new Error(
-    "입장 코드를 생성하지 못했어요. 다시 시도해 주세요."
-  );
-}
-
 function buildCreatePayload(
   params: CreateElderParams,
-  entryCode: string | null,
   columns: ElderColumnShape
 ) {
   const payload: Record<string, unknown> = {};
   const displayName =
     params.displayName?.trim() ||
     `${params.fullName} 어르신`;
+  const normalizedBirthDate =
+    normalizeBirthDate(params.birthDate);
+  const normalizedEntryCode =
+    normalizeEntryCode(params.entryCode);
+  const storedMemo = buildStoredMemo(
+    params.note,
+    {
+      entryCode: columns.hasEntryCode
+        ? null
+        : normalizedEntryCode,
+      birthDate: normalizedBirthDate,
+    }
+  );
 
   if (columns.hasFullName) {
     payload.full_name = params.fullName;
@@ -374,6 +489,13 @@ function buildCreatePayload(
     typeof params.age === "number"
   ) {
     payload.age = params.age;
+  }
+
+  if (
+    columns.hasBirthDate &&
+    normalizedBirthDate
+  ) {
+    payload.birth_date = normalizedBirthDate;
   }
 
   if (
@@ -399,12 +521,12 @@ function buildCreatePayload(
     payload.diagnosis = params.diagnosis;
   }
 
-  if (columns.hasNote && params.note) {
-    payload.note = params.note;
+  if (columns.hasNote && storedMemo) {
+    payload.note = storedMemo;
   }
 
-  if (columns.hasLifeMemo && params.note) {
-    payload.life_memo = params.note;
+  if (columns.hasLifeMemo && storedMemo) {
+    payload.life_memo = storedMemo;
   }
 
   if (columns.hasCognitiveLevel) {
@@ -440,29 +562,27 @@ function buildCreatePayload(
       new Date().toISOString();
   }
 
-  if (columns.hasEntryCode && entryCode) {
-    payload.entry_code = entryCode;
+  if (columns.hasEntryCode) {
+    payload.entry_code = normalizedEntryCode;
   }
 
   return payload;
 }
 
-function isEntryCodeConflict(error: {
-  code?: string;
-  message?: string;
-  details?: string;
-}) {
-  const combinedMessage = [
-    error.message,
-    error.details,
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  return (
-    error.code === "23505" &&
-    combinedMessage.includes("entry_code")
+async function ensureEntryCodeIsAvailable(
+  client: SupabaseClient,
+  entryCode: string
+) {
+  const elders = await listMappedElders(client);
+  const matchedElder = elders.find(
+    (elder) => elder.entry_code === entryCode
   );
+
+  if (matchedElder) {
+    throw new Error(
+      "이미 사용 중인 입장 코드입니다."
+    );
+  }
 }
 
 export async function dbCreateElder(
@@ -470,69 +590,65 @@ export async function dbCreateElder(
   params: CreateElderParams
 ) {
   const columns = await getElderColumns(client);
+  const entryCode =
+    normalizeEntryCode(params.entryCode);
+  const birthDate =
+    normalizeBirthDate(params.birthDate);
 
-  if (!columns.hasEntryCode) {
-    const payload = buildCreatePayload(
-      params,
-      null,
-      columns
+  if (!entryCode) {
+    throw new Error(
+      "입장 코드를 올바르게 입력해 주세요."
     );
-    const { data, error } = await client
-      .from("elders")
-      .insert(payload)
-      .select("*")
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
-    const elders = await listMappedElders(client);
-    const createdElder = elders.find(
-      (elder) => elder.id === data.id
-    );
-
-    if (!createdElder) {
-      return mapElderRow(data as RawElderRow);
-    }
-
-    return createdElder;
   }
 
-  for (
-    let attempt = 0;
-    attempt < ENTRY_CODE_RETRIES;
-    attempt += 1
-  ) {
-    const entryCode =
-      await generateUniqueEntryCode(client);
-    const payload = buildCreatePayload(
-      params,
-      entryCode,
-      columns
+  if (!birthDate) {
+    throw new Error(
+      "생년월일을 올바르게 입력해 주세요."
     );
+  }
 
-    const { data, error } = await client
-      .from("elders")
-      .insert(payload)
-      .select("*")
-      .single();
+  if (
+    !columns.hasEntryCode &&
+    !columns.hasNote &&
+    !columns.hasLifeMemo
+  ) {
+    throw new Error(
+      "현재 DB 스키마에서는 입장 코드를 저장할 수 없습니다."
+    );
+  }
 
-    if (!error) {
-      return mapElderRow(data as RawElderRow);
-    }
+  await ensureEntryCodeIsAvailable(
+    client,
+    entryCode
+  );
 
-    if (
-      isEntryCodeConflict(error)
-    ) {
-      continue;
-    }
+  const payload = buildCreatePayload(
+    {
+      ...params,
+      birthDate,
+      entryCode,
+    },
+    columns
+  );
+  const { data, error } = await client
+    .from("elders")
+    .insert(payload)
+    .select("*")
+    .single();
 
+  if (error) {
     throw error;
   }
 
-  throw new Error(
-    "입장 코드가 겹쳐서 등록하지 못했어요. 다시 시도해 주세요."
+  const createdElder = columns.hasEntryCode
+    ? mapElderRow(data as RawElderRow)
+    : (await listMappedElders(client)).find(
+        (elder) => elder.id === data.id
+      );
+
+  return (
+    createdElder ??
+    mapElderRow(data as RawElderRow)
   );
 }
 

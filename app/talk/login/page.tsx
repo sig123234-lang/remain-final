@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { normalizeEntryCode } from "@/lib/elder-utils";
 import { findElderByEntryCode } from "@/services/elderService";
 
 export default function TalkLoginPage() {
@@ -71,10 +72,12 @@ export default function TalkLoginPage() {
               value={entryCode}
               onChange={(event) => {
                 setEntryCode(
-                  event.target.value.toUpperCase()
+                  normalizeEntryCode(
+                    event.target.value
+                  )
                 );
               }}
-              placeholder="예: RM123456"
+              placeholder="예: HAPPY84"
               autoCapitalize="characters"
               autoCorrect="off"
               spellCheck={false}

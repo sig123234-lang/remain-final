@@ -8,6 +8,7 @@ export interface ElderRecord {
   full_name: string;
   display_name?: string | null;
   age?: number | null;
+  birth_date?: string | null;
   birth_year?: number | null;
   gender?: ElderGender | null;
   facility_name?: string | null;
@@ -21,6 +22,8 @@ export interface ElderRecord {
 
 export interface CreateElderParams {
   fullName: string;
+  entryCode: string;
+  birthDate: string;
   displayName?: string;
   age?: number;
   birthYear?: number;

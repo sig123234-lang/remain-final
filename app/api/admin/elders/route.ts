@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { dbCreateElder } from "@/lib/elder-db-ops";
+import {
+  deriveAgeFromBirthDate,
+  deriveBirthYear,
+  normalizeBirthDate,
+  normalizeEntryCode,
+} from "@/lib/elder-utils";
 import { getSupabaseServiceRoleClient } from "@/lib/supabase/admin";
 import type {
   CreateElderParams,
@@ -42,31 +48,6 @@ function asOptionalString(
   return normalized || undefined;
 }
 
-function asOptionalNumber(
-  value: unknown
-) {
-  if (typeof value === "number") {
-    return Number.isFinite(value)
-      ? value
-      : null;
-  }
-
-  if (typeof value === "string") {
-    const normalized = value.trim();
-
-    if (!normalized) {
-      return undefined;
-    }
-
-    const parsed = Number(normalized);
-    return Number.isFinite(parsed)
-      ? parsed
-      : null;
-  }
-
-  return undefined;
-}
-
 function asOptionalGender(
   value: unknown
 ) {
@@ -94,10 +75,14 @@ export async function POST(request: Request) {
 
   const fullName =
     asOptionalString(body.fullName);
-  const age = asOptionalNumber(body.age);
-  const birthYear = asOptionalNumber(
-    body.birthYear
-  );
+  const entryCode =
+    normalizeEntryCode(
+      asOptionalString(body.entryCode) ?? ""
+    );
+  const birthDate =
+    normalizeBirthDate(
+      asOptionalString(body.birthDate) ?? ""
+    );
 
   if (!fullName) {
     return NextResponse.json(
@@ -106,11 +91,36 @@ export async function POST(request: Request) {
     );
   }
 
+  if (!entryCode) {
+    return NextResponse.json(
+      {
+        error:
+          "입장 코드를 올바르게 입력해 주세요.",
+      },
+      { status: 400 }
+    );
+  }
+
+  if (!birthDate) {
+    return NextResponse.json(
+      {
+        error:
+          "생년월일을 올바르게 입력해 주세요.",
+      },
+      { status: 400 }
+    );
+  }
+
+  const age =
+    deriveAgeFromBirthDate(birthDate);
+  const birthYear =
+    deriveBirthYear(birthDate);
+
   if (age === null || birthYear === null) {
     return NextResponse.json(
       {
         error:
-          "나이와 출생년도는 숫자로 입력해 주세요.",
+          "생년월일을 기준으로 나이를 계산하지 못했어요.",
       },
       { status: 400 }
     );
@@ -132,6 +142,8 @@ export async function POST(request: Request) {
 
   const params: CreateElderParams = {
     fullName,
+    entryCode,
+    birthDate,
     displayName: asOptionalString(
       body.displayName
     ),
