@@ -74,7 +74,8 @@ export function normalizeEntryCode(
 }
 
 export function mapElderRow(
-  row: RawElderRow
+  row: RawElderRow,
+  fallbackEntryCode?: string | null
 ): ElderRecord {
   const name =
     asString(row.full_name) ??
@@ -116,12 +117,89 @@ export function mapElderRow(
       asString(
         (row as { life_memo?: unknown }).life_memo
       ),
-    entry_code: asString(row.entry_code),
+    entry_code:
+      asString(row.entry_code) ??
+      fallbackEntryCode ??
+      null,
     is_active: isActive,
     created_at: row.created_at,
     updated_at:
       asString(row.updated_at) ?? null,
   };
+}
+
+function compareElderRows(
+  left: RawElderRow,
+  right: RawElderRow
+) {
+  const createdAtOrder =
+    left.created_at.localeCompare(
+      right.created_at
+    );
+
+  if (createdAtOrder !== 0) {
+    return createdAtOrder;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function formatFallbackEntryCode(
+  position: number
+) {
+  return `${ENTRY_CODE_PREFIX}${String(
+    position
+  ).padStart(ENTRY_CODE_DIGITS, "0")}`;
+}
+
+function buildFallbackEntryCodeMap(
+  rows: RawElderRow[]
+) {
+  const orderedRows = [...rows].sort(
+    compareElderRows
+  );
+
+  return new Map(
+    orderedRows.map((row, index) => [
+      row.id,
+      formatFallbackEntryCode(index + 1),
+    ])
+  );
+}
+
+async function selectAllElderRows(
+  client: SupabaseClient
+) {
+  const { data, error } = await client
+    .from("elders")
+    .select("*")
+    .order("created_at", {
+      ascending: true,
+    })
+    .order("id", {
+      ascending: true,
+    });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? []) as RawElderRow[];
+}
+
+export async function listMappedElders(
+  client: SupabaseClient
+) {
+  const rows = await selectAllElderRows(client);
+  const fallbackEntryCodeMap =
+    buildFallbackEntryCodeMap(rows);
+
+  return rows.map((row) =>
+    mapElderRow(
+      row,
+      fallbackEntryCodeMap.get(row.id)
+    )
+  );
 }
 
 async function hasElderColumn(
@@ -271,7 +349,7 @@ async function generateUniqueEntryCode(
 
 function buildCreatePayload(
   params: CreateElderParams,
-  entryCode: string,
+  entryCode: string | null,
   columns: ElderColumnShape
 ) {
   const payload: Record<string, unknown> = {};
@@ -362,7 +440,7 @@ function buildCreatePayload(
       new Date().toISOString();
   }
 
-  if (columns.hasEntryCode) {
+  if (columns.hasEntryCode && entryCode) {
     payload.entry_code = entryCode;
   }
 
@@ -394,9 +472,31 @@ export async function dbCreateElder(
   const columns = await getElderColumns(client);
 
   if (!columns.hasEntryCode) {
-    throw new Error(
-      "elders.entry_code 컬럼이 없습니다. 마이그레이션을 먼저 적용해 주세요."
+    const payload = buildCreatePayload(
+      params,
+      null,
+      columns
     );
+    const { data, error } = await client
+      .from("elders")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    const elders = await listMappedElders(client);
+    const createdElder = elders.find(
+      (elder) => elder.id === data.id
+    );
+
+    if (!createdElder) {
+      return mapElderRow(data as RawElderRow);
+    }
+
+    return createdElder;
   }
 
   for (
@@ -450,8 +550,13 @@ export async function dbFindElderByEntryCode(
   const columns = await getElderColumns(client);
 
   if (!columns.hasEntryCode) {
-    throw new Error(
-      "입장 코드 기능이 아직 배포되지 않았어요. 마이그레이션을 먼저 적용해 주세요."
+    const elders = await listMappedElders(client);
+    return (
+      elders.find(
+        (elder) =>
+          elder.is_active &&
+          elder.entry_code === entryCode
+      ) ?? null
     );
   }
 
@@ -468,7 +573,14 @@ export async function dbFindElderByEntryCode(
   const row = (data ?? [])[0];
 
   if (!row) {
-    return null;
+    const elders = await listMappedElders(client);
+    return (
+      elders.find(
+        (elder) =>
+          elder.is_active &&
+          elder.entry_code === entryCode
+      ) ?? null
+    );
   }
 
   const elder = mapElderRow(

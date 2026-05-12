@@ -1,8 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
-  mapElderRow,
-  type RawElderRow,
+  listMappedElders,
 } from "@/lib/elder-db-ops";
 import { SESSION_SELECT } from "@/lib/session-db-ops";
 import type {
@@ -25,27 +24,11 @@ import type {
  * 코드가 기대하는 ElderRecord 모양으로 매핑한다.
  */
 
-async function selectElders(client: SupabaseClient) {
-  const { data, error } = await client
-    .from("elders")
-    .select("*")
-    .order("created_at", {
-      ascending: false,
-    });
-
-  if (error) {
-    throw error;
-  }
-
-  return (data ?? []) as RawElderRow[];
-}
-
 export async function dbListElders(
   client: SupabaseClient
 ) {
-  const rows = await selectElders(client);
-  return rows
-    .map(mapElderRow)
+  const elders = await listMappedElders(client);
+  return elders
     .filter((elder) => elder.is_active);
 }
 
@@ -53,17 +36,18 @@ export async function dbGetElder(
   client: SupabaseClient,
   elderId: string
 ) {
-  const { data, error } = await client
-    .from("elders")
-    .select("*")
-    .eq("id", elderId)
-    .single();
+  const elders = await listMappedElders(client);
+  const elder = elders.find(
+    (item) => item.id === elderId
+  );
 
-  if (error) {
-    throw error;
+  if (!elder) {
+    throw new Error(
+      "어르신 정보를 찾지 못했어요."
+    );
   }
 
-  return mapElderRow(data as RawElderRow);
+  return elder;
 }
 
 export async function dbListEldersByIds(
@@ -74,17 +58,11 @@ export async function dbListEldersByIds(
     return [];
   }
 
-  const { data, error } = await client
-    .from("elders")
-    .select("*")
-    .in("id", elderIds);
+  const elders = await listMappedElders(client);
+  const targetIds = new Set(elderIds);
 
-  if (error) {
-    throw error;
-  }
-
-  return ((data ?? []) as RawElderRow[]).map(
-    mapElderRow
+  return elders.filter((elder) =>
+    targetIds.has(elder.id)
   );
 }
 
