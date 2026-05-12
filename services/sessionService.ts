@@ -1,13 +1,10 @@
+import { agentDebugLog } from "@/lib/agent-debug-log";
+import { SESSION_SELECT } from "@/lib/session-db-ops";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import type {
-  ChatRole,
   SessionCommandRecord,
   SessionCommandStatus,
-  SessionCommandType,
   SessionMessageRecord,
-  SessionMessageSource,
-  SessionMessageType,
-  SessionMode,
   SessionRecommendationInput,
   SessionRecommendationRecord,
   SessionRecommendationStatus,
@@ -16,52 +13,99 @@ import type {
   SessionSummaryRecord,
   SessionRecord,
 } from "@/types/session";
+import type {
+  AddMessageParams,
+  CreateSessionCommandParams,
+  CreateSessionParams,
+} from "@/types/session-mutations";
 
-export interface CreateSessionParams {
-  elderId: string;
-  facilityId?: string;
-  mode?: SessionMode;
-  initialState?: SessionRuntimeState;
+export type {
+  AddMessageParams,
+  CreateSessionCommandParams,
+  CreateSessionParams,
+} from "@/types/session-mutations";
+
+async function sessionWrite<T>(
+  body: Record<string, unknown>
+): Promise<T> {
+  if (
+    typeof window === "undefined"
+  ) {
+    throw new Error(
+      "Session mutations require a browser environment."
+    );
+  }
+
+  const op =
+    typeof body.op === "string"
+      ? body.op
+      : "unknown";
+
+  // #region agent log
+  agentDebugLog({
+    location:
+      "sessionService.ts:sessionWrite:beforeFetch",
+    message: "calling /api/session/write",
+    hypothesisId: "H1",
+    data: { op },
+  });
+  // #endregion
+
+  const response = await fetch(
+    "/api/session/write",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type":
+          "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  const payload =
+    (await response
+      .json()
+      .catch(() => ({}))) as {
+      data?: T;
+      error?: string;
+    };
+
+  if (!response.ok) {
+    // #region agent log
+    agentDebugLog({
+      location:
+        "sessionService.ts:sessionWrite:notOk",
+      message: "session write HTTP error",
+      hypothesisId: "H1",
+      data: {
+        op,
+        status: response.status,
+        errorSnippet: String(
+          payload.error ?? ""
+        ).slice(0, 240),
+      },
+    });
+    // #endregion
+
+    throw new Error(
+      payload.error ||
+        "세션 저장에 실패했어요."
+    );
+  }
+
+  // #region agent log
+  agentDebugLog({
+    location:
+      "sessionService.ts:sessionWrite:ok",
+    message: "session write ok",
+    hypothesisId: "H2",
+    data: { op, status: response.status },
+  });
+  // #endregion
+
+  return payload.data as T;
 }
-
-export interface AddMessageParams {
-  sessionId: string;
-  elderId: string;
-  role: ChatRole;
-  content: string;
-  emotion?: string;
-  riskLevel?: string;
-  sttConfidence?: number;
-  messageType?: SessionMessageType;
-  source?: SessionMessageSource;
-  turnIndex?: number;
-  sequenceInTurn?: number;
-  metadata?: Record<string, unknown>;
-  isFinal?: boolean;
-}
-
-export interface CreateSessionCommandParams {
-  sessionId: string;
-  commandType: SessionCommandType;
-  payload?: Record<string, unknown>;
-  issuedBy: string;
-}
-
-const SESSION_SELECT = `
-  id,
-  elder_id,
-  facility_id,
-  mode,
-  status,
-  summary,
-  detected_emotion,
-  current_state,
-  current_turn,
-  current_action,
-  last_activity_at,
-  started_at,
-  ended_at
-`;
 
 export function createInitialRuntimeState(
   currentQuestion: string
@@ -87,38 +131,13 @@ export function createInitialRuntimeState(
   };
 }
 
-export async function createSession({
-  elderId,
-  facilityId,
-  mode = "collab",
-  initialState,
-}: CreateSessionParams) {
-  const supabase =
-    getSupabaseBrowserClient();
-
-  const { data, error } = await supabase
-    .from("sessions")
-    .insert({
-      elder_id: elderId,
-      facility_id: facilityId,
-      mode,
-      status: "active",
-      current_state: initialState,
-      current_turn:
-        initialState?.turnCount ?? 0,
-      current_action:
-        initialState?.action ?? "continue",
-      last_activity_at:
-        new Date().toISOString(),
-    })
-    .select(SESSION_SELECT)
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as SessionRecord;
+export async function createSession(
+  params: CreateSessionParams
+) {
+  return sessionWrite<SessionRecord>({
+    op: "createSession",
+    payload: params,
+  });
 }
 
 export async function getSession(
@@ -178,49 +197,15 @@ export async function listSessions() {
   return (data ?? []) as SessionRecord[];
 }
 
-export async function addMessage({
-  sessionId,
-  elderId,
-  role,
-  content,
-  emotion,
-  riskLevel = "none",
-  sttConfidence,
-  messageType = "utterance",
-  source = "system",
-  turnIndex = 0,
-  sequenceInTurn = 0,
-  metadata = {},
-  isFinal = true,
-}: AddMessageParams) {
-  const supabase =
-    getSupabaseBrowserClient();
-
-  const { data, error } = await supabase
-    .from("messages")
-    .insert({
-      session_id: sessionId,
-      elder_id: elderId,
-      role,
-      content,
-      emotion,
-      risk_level: riskLevel,
-      stt_confidence: sttConfidence,
-      message_type: messageType,
-      source,
-      turn_index: turnIndex,
-      sequence_in_turn: sequenceInTurn,
-      metadata,
-      is_final: isFinal,
-    })
-    .select("*")
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as SessionMessageRecord;
+export async function addMessage(
+  params: AddMessageParams
+) {
+  return sessionWrite<SessionMessageRecord>(
+    {
+      op: "addMessage",
+      payload: params,
+    }
+  );
 }
 
 export async function getSessionMessages(
@@ -248,29 +233,11 @@ export async function updateSessionCurrentState(
   sessionId: string,
   currentState: SessionRuntimeState
 ) {
-  const supabase =
-    getSupabaseBrowserClient();
-
-  const { data, error } = await supabase
-    .from("sessions")
-    .update({
-      current_state: currentState,
-      current_turn: currentState.turnCount,
-      current_action: currentState.action,
-      detected_emotion:
-        currentState.emotionDetected,
-      last_activity_at:
-        new Date().toISOString(),
-    })
-    .eq("id", sessionId)
-    .select(SESSION_SELECT)
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as SessionRecord;
+  return sessionWrite<SessionRecord>({
+    op: "updateSessionCurrentState",
+    sessionId,
+    currentState,
+  });
 }
 
 export async function getSessionRecommendations(
@@ -306,46 +273,19 @@ export async function createSessionRecommendations(
   recommendations: SessionRecommendationInput[],
   basedOnMessageId?: string
 ) {
-  const supabase =
-    getSupabaseBrowserClient();
-
-  const rows = recommendations.map(
-    (recommendation, index) => ({
-      session_id: sessionId,
-      based_on_message_id:
-        basedOnMessageId,
-      question_text:
-        recommendation.question,
-      rationale:
-        recommendation.rationale,
-      target_emotion:
-        recommendation.targetEmotion,
-      target_depth:
-        recommendation.targetDepth,
-      target_memory:
-        recommendation.targetMemory,
-      risk_flag:
-        recommendation.riskFlag,
-      rank: index + 1,
-      status: "suggested",
-      created_by: createdBy,
-    })
-  );
-
-  if (rows.length === 0) {
+  if (recommendations.length === 0) {
     return [];
   }
 
-  const { data, error } = await supabase
-    .from("session_recommendations")
-    .insert(rows)
-    .select("*");
-
-  if (error) {
-    throw error;
-  }
-
-  return (data ?? []) as SessionRecommendationRecord[];
+  return sessionWrite<
+    SessionRecommendationRecord[]
+  >({
+    op: "createSessionRecommendations",
+    sessionId,
+    createdBy,
+    recommendations,
+    basedOnMessageId,
+  });
 }
 
 export async function updateRecommendationStatus(
@@ -354,53 +294,26 @@ export async function updateRecommendationStatus(
   selectedBy?: string,
   sentMessageId?: string
 ) {
-  const supabase =
-    getSupabaseBrowserClient();
-
-  const { data, error } = await supabase
-    .from("session_recommendations")
-    .update({
+  return sessionWrite<SessionRecommendationRecord>(
+    {
+      op: "updateRecommendationStatus",
+      recommendationId,
       status,
-      selected_by: selectedBy,
-      sent_message_id: sentMessageId,
-    })
-    .eq("id", recommendationId)
-    .select("*")
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as SessionRecommendationRecord;
+      selectedBy,
+      sentMessageId,
+    }
+  );
 }
 
-export async function createSessionCommand({
-  sessionId,
-  commandType,
-  payload,
-  issuedBy,
-}: CreateSessionCommandParams) {
-  const supabase =
-    getSupabaseBrowserClient();
-
-  const { data, error } = await supabase
-    .from("session_commands")
-    .insert({
-      session_id: sessionId,
-      command_type: commandType,
-      payload,
-      status: "queued",
-      issued_by: issuedBy,
-    })
-    .select("*")
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as SessionCommandRecord;
+export async function createSessionCommand(
+  params: CreateSessionCommandParams
+) {
+  return sessionWrite<SessionCommandRecord>(
+    {
+      op: "createSessionCommand",
+      payload: params,
+    }
+  );
 }
 
 export async function getSessionCommands(
@@ -428,27 +341,13 @@ export async function updateCommandStatus(
   commandId: string,
   status: SessionCommandStatus
 ) {
-  const supabase =
-    getSupabaseBrowserClient();
-
-  const { data, error } = await supabase
-    .from("session_commands")
-    .update({
+  return sessionWrite<SessionCommandRecord>(
+    {
+      op: "updateCommandStatus",
+      commandId,
       status,
-      applied_at:
-        status === "applied"
-          ? new Date().toISOString()
-          : null,
-    })
-    .eq("id", commandId)
-    .select("*")
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as SessionCommandRecord;
+    }
+  );
 }
 
 export async function getRecentSessions(
@@ -481,34 +380,13 @@ export async function endSession(
   detectedEmotion?: string,
   currentState?: SessionRuntimeState
 ) {
-  const supabase =
-    getSupabaseBrowserClient();
-
-  const { data, error } = await supabase
-    .from("sessions")
-    .update({
-      status: "ended",
-      ended_at: new Date().toISOString(),
-      summary,
-      detected_emotion:
-        detectedEmotion,
-      current_state: currentState,
-      current_turn:
-        currentState?.turnCount,
-      current_action:
-        currentState?.action,
-      last_activity_at:
-        new Date().toISOString(),
-    })
-    .eq("id", sessionId)
-    .select(SESSION_SELECT)
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as SessionRecord;
+  return sessionWrite<SessionRecord>({
+    op: "endSession",
+    sessionId,
+    summary,
+    detectedEmotion,
+    currentState,
+  });
 }
 
 export async function saveSessionSummary({
@@ -534,18 +412,14 @@ export async function saveSessionSummary({
   seasons?: string[];
   emotions?: string[];
 }) {
-  const supabase =
-    getSupabaseBrowserClient();
-
-  const { data, error } = await supabase
-    .from("session_summaries")
-    .upsert(
-      {
-        session_id: sessionId,
-        elder_id: elderId,
+  return sessionWrite<SessionSummaryRecord>(
+    {
+      op: "saveSessionSummary",
+      payload: {
+        sessionId,
+        elderId,
         summary,
-        family_friendly_summary:
-          familyFriendlySummary,
+        familyFriendlySummary,
         keywords,
         people,
         places,
@@ -553,18 +427,8 @@ export async function saveSessionSummary({
         seasons,
         emotions,
       },
-      {
-        onConflict: "session_id",
-      }
-    )
-    .select("*")
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as SessionSummaryRecord;
+    }
+  );
 }
 
 export async function getSessionSummary(

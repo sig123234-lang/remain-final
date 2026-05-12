@@ -13,6 +13,7 @@ import SeasonalOrb from "@/components/talk/SeasonalOrb";
 import VoiceActionButton from "@/components/talk/VoiceActionButton";
 import { useBrowserSpeechTranscriber } from "@/hooks/useBrowserSpeechTranscriber";
 import { useSessionRuntime } from "@/hooks/useSessionRuntime";
+import { agentDebugLog } from "@/lib/agent-debug-log";
 import {
   getBodyTextClass,
   getQuestionTextClass,
@@ -163,6 +164,24 @@ export default function StoryClientPage({
         });
       };
 
+      utterance.onerror = (
+        event
+      ) => {
+        // #region agent log
+        agentDebugLog({
+          location:
+            "story-client.tsx:speak:utteranceError",
+          message: "speech synthesis error",
+          hypothesisId: "H7",
+          data: {
+            error: String(
+              event.error ?? ""
+            ),
+          },
+        });
+        // #endregion
+      };
+
       window.speechSynthesis.speak(
         utterance
       );
@@ -242,6 +261,16 @@ export default function StoryClientPage({
     };
 
   const handleVoiceButton = () => {
+    // #region agent log
+    agentDebugLog({
+      location:
+        "story-client.tsx:handleVoiceButton",
+      message: "voice button",
+      hypothesisId: "H7",
+      data: { status },
+    });
+    // #endregion
+
     if (status === "waiting") {
       speak(currentQuestion);
       return;

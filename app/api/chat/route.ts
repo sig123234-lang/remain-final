@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 
+import { agentDebugLog } from "@/lib/agent-debug-log";
 import type { ChatCompletionPayload } from "@/types/session";
 
 const openai = new OpenAI({
@@ -93,17 +94,23 @@ ${JSON.stringify(sessionState)}
         ],
 
         temperature: 0.7,
-        max_tokens: 300,
+        // JSON 응답이 (speech + tts_text + 메타데이터 + 추천 3개)를 모두 담아야 한다.
+        // 300으로는 항상 잘려 SyntaxError 가 발생하던 문제 → 1200 으로 상향.
+        max_tokens: 1200,
       });
 
-    const raw =
-      completion.choices[0]?.message
-        ?.content || "{}";
+    const choice = completion.choices[0];
+    const raw = choice?.message?.content || "{}";
+    const finishReason = choice?.finish_reason;
 
-    console.log(
-      "RAW AI 응답:",
-      raw
-    );
+    console.log("RAW AI 응답:", raw);
+
+    if (finishReason === "length") {
+      // OpenAI 출력이 잘렸음 → JSON 파싱이 깨지므로 명시적으로 실패시킨다.
+      throw new Error(
+        `OpenAI response truncated (finish_reason=length, length=${raw.length})`
+      );
+    }
 
     const parsed =
       JSON.parse(raw) as Partial<ChatCompletionPayload>;
@@ -173,6 +180,22 @@ ${JSON.stringify(sessionState)}
 
     return Response.json(normalized);
   } catch (error) {
+    const errMsg =
+      error instanceof Error
+        ? error.message
+        : String(error);
+
+    // #region agent log
+    agentDebugLog({
+      location: "app/api/chat/route.ts:catch",
+      message: "chat completion failed",
+      hypothesisId: "H6",
+      data: {
+        errSnippet: errMsg.slice(0, 200),
+      },
+    });
+    // #endregion
+
     console.error(
       "AI 응답 생성 실패:",
       error

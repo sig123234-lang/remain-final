@@ -12,6 +12,9 @@ export function useBrowserSpeechTranscriber() {
     useRef<SpeechRecognition | null>(null);
   const finalTranscriptRef =
     useRef("");
+  /** 마지막 onresult에서 계산한 전체 전사(확정+임시) — stop 시 React state보다 최신 */
+  const latestCombinedTranscriptRef =
+    useRef("");
   const [transcript, setTranscript] =
     useState("");
   const isSupported =
@@ -24,6 +27,8 @@ export function useBrowserSpeechTranscriber() {
   const resetTranscript =
     useCallback(() => {
       finalTranscriptRef.current = "";
+      latestCombinedTranscriptRef.current =
+        "";
       setTranscript("");
     }, []);
 
@@ -84,12 +89,14 @@ export function useBrowserSpeechTranscriber() {
             }
           }
 
-          setTranscript(
-            (
-              finalTranscriptRef.current +
-              interimTranscript
-            ).trim()
-          );
+          const combined = (
+            finalTranscriptRef.current +
+            interimTranscript
+          ).trim();
+
+          latestCombinedTranscriptRef.current =
+            combined;
+          setTranscript(combined);
         };
 
         recognition.onerror = (
@@ -115,11 +122,8 @@ export function useBrowserSpeechTranscriber() {
       recognitionRef.current?.stop();
       recognitionRef.current = null;
 
-      return (
-        finalTranscriptRef.current ||
-        transcript
-      ).trim();
-    }, [transcript]);
+      return latestCombinedTranscriptRef.current.trim();
+    }, []);
 
   useEffect(() => {
     return () => {
