@@ -60,32 +60,68 @@ export default function StoryClientPage({
   const hasSession =
     Boolean(sessionId);
 
+  /**
+   * iOS Safari / iPadOS / Samsung Internet 은 `speechSynthesis.speak()` 가
+   * user gesture 와 같은 task 에서 실행돼야 소리를 낸다. `await` 가 끼면
+   * activation 이 만료돼 에러 없이 무시된다.
+   *
+   * 모든 사용자 탭의 맨 처음에 동기로 호출해서 speech 세션을 활성화해 두면
+   * 그 뒤로 async 안에서 호출하는 speak() 도 같은 세션에 큐잉돼 정상 재생된다.
+   */
+  const primeSpeechSynthesis =
+    useCallback(() => {
+      if (typeof window === "undefined") {
+        return;
+      }
+      if (!("speechSynthesis" in window)) {
+        return;
+      }
+
+      // 이미 떠 있는 큐를 비우고 거의 들리지 않는 짧은 발화를 큐잉.
+      // 이 자체가 user gesture 안의 speak() 라 iOS 가 받아들이며,
+      // 이후 같은 gesture 체인에서 호출되는 speak() 도 함께 허용된다.
+      const primer =
+        new SpeechSynthesisUtterance(" ");
+      primer.volume = 0;
+      primer.rate = 1;
+      primer.lang = "ko-KR";
+      try {
+        window.speechSynthesis.speak(primer);
+      } catch {
+        // 어떤 브라우저는 speak() 가 throw 할 수 있다. 무시.
+      }
+    }, []);
+
   const speak = useCallback(
     (text: string) => {
       if (typeof window === "undefined") {
         return;
       }
+      if (!("speechSynthesis" in window)) {
+        return;
+      }
+      if (!text || !text.trim()) {
+        return;
+      }
 
-      window.speechSynthesis.cancel();
-
+      // primer 가 막 큐잉됐을 때는 cancel() 하면 iOS 가 세션 자체를 잠가버려
+      // 본격 speak 도 무음이 된다. 그래서 cancel 은 호출하지 않고 큐 뒤에 그냥
+      // 붙인다. (primer 는 volume 0 이라 사용자는 들리지 않음)
       const utterance =
         new SpeechSynthesisUtterance(text);
 
       utterance.lang = "ko-KR";
-      utterance.rate =
-        getSpeechRateValue(
-          preferences.speechRate
-        );
+      utterance.rate = getSpeechRateValue(
+        preferences.speechRate
+      );
       utterance.pitch = 1;
 
-      const preferredVoice =
-        pickPreferredVoice(
-          preferences.voice
-        );
+      const preferredVoice = pickPreferredVoice(
+        preferences.voice
+      );
 
       if (preferredVoice) {
-        utterance.voice =
-          preferredVoice;
+        utterance.voice = preferredVoice;
       }
 
       utterance.onstart = () => {
@@ -101,9 +137,17 @@ export default function StoryClientPage({
         });
       };
 
-      window.speechSynthesis.speak(
-        utterance
-      );
+      utterance.onerror = () => {
+        // 모바일에서 speech 가 silently 실패한 경우라도 흐름은 진행되게
+        // 한다. listening 단계로 넘어가서 사용자가 답할 수 있도록.
+        setStatus("listening");
+        startListening((message) => {
+          setBrowserError(message);
+          setStatus("waiting");
+        });
+      };
+
+      window.speechSynthesis.speak(utterance);
     },
     [
       preferences.speechRate,
@@ -132,34 +176,29 @@ export default function StoryClientPage({
 
   const stopListeningFromUi =
     async () => {
-      const finalTranscript =
-        stopListening();
+      // 모바일 TTS user-gesture 토큰을 유지하기 위해 즉시 prime.
+      primeSpeechSynthesis();
+
+      const finalTranscript = stopListening();
 
       setStatus("thinking");
 
       if (!finalTranscript) {
         resetTranscript();
-
-        setTimeout(() => {
-          speak(
-            "괜찮아요. 천천히 생각나시는 만큼 말씀해 주세요."
-          );
-        }, 400);
+        speak(
+          "괜찮아요. 천천히 생각나시는 만큼 말씀해 주세요."
+        );
         return;
       }
 
       try {
         const result =
-          await processUserTurn(
-            finalTranscript
-          );
+          await processUserTurn(finalTranscript);
 
         resetTranscript();
 
         if (result?.ttsText) {
-          setTimeout(() => {
-            speak(result.ttsText);
-          }, 500);
+          speak(result.ttsText);
         } else {
           setStatus("waiting");
         }
@@ -171,35 +210,35 @@ export default function StoryClientPage({
             : "대화를 이어가지 못했어요."
         );
 
-        setTimeout(() => {
-          speak(
-            "잠시 연결이 불안정해요. 다시 한번 이야기해볼까요?"
-          );
-        }, 500);
+        speak(
+          "잠시 연결이 불안정해요. 다시 한번 이야기해볼까요?"
+        );
       }
     };
 
-  const handleVoiceButton =
-    async () => {
+  const handleVoiceButton = async () => {
     if (isLoading) {
       return;
     }
+
+    // ⚠️ 이 한 줄이 모바일 TTS 의 핵심. 어떤 분기로 가든 user gesture
+    // 안에서 동기로 speech 세션을 잡아둬야 이후 async speak() 가 살아남는다.
+    primeSpeechSynthesis();
 
     if (!sessionId) {
       setBrowserError(null);
       setStatus("thinking");
 
-      const nextSessionId =
-        await initializeSession();
+      // 첫 질문은 default value 가 있으니 init 을 기다리지 않고 바로 읽어 준다.
+      // 이렇게 하면 모바일에서도 user gesture 동기 컨텍스트 안에서 speak 가 호출된다.
+      speak(currentQuestion);
+
+      const nextSessionId = await initializeSession();
 
       if (!nextSessionId) {
         setStatus("waiting");
         return;
       }
-
-      setTimeout(() => {
-        speak(currentQuestion);
-      }, 300);
       return;
     }
 
