@@ -50,6 +50,8 @@ const META_ENTRY_CODE_PREFIX =
 const META_BIRTH_DATE_PREFIX =
   "[[remain-birth-date:";
 const META_SUFFIX = "]]";
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 let elderColumnsPromise:
   | Promise<ElderColumnShape>
@@ -72,6 +74,22 @@ function asBoolean(
   return typeof value === "boolean"
     ? value
     : fallback;
+}
+
+function sanitizeFacilityName(
+  value: unknown
+) {
+  const facilityName = asString(value);
+
+  if (!facilityName) {
+    return null;
+  }
+
+  return UUID_PATTERN.test(
+    facilityName.trim()
+  )
+    ? null
+    : facilityName;
 }
 
 function serializeMetaLine(
@@ -245,9 +263,8 @@ export function mapElderRow(
       asNumber(row.birth_year),
     gender: elderGender,
     facility_name:
-      asString(row.facility_name) ??
-      asString(
-        (row as { facility_id?: unknown }).facility_id
+      sanitizeFacilityName(
+        row.facility_name
       ),
     diagnosis: asString(row.diagnosis),
     note: embeddedMeta.note,
@@ -484,11 +501,8 @@ function buildCreatePayload(
     payload.display_name = displayName;
   }
 
-  if (
-    columns.hasAge &&
-    typeof params.age === "number"
-  ) {
-    payload.age = params.age;
+  if (columns.hasAge) {
+    payload.age = params.age ?? null;
   }
 
   if (
@@ -498,35 +512,33 @@ function buildCreatePayload(
     payload.birth_date = normalizedBirthDate;
   }
 
-  if (
-    columns.hasBirthYear &&
-    typeof params.birthYear === "number"
-  ) {
-    payload.birth_year = params.birthYear;
+  if (columns.hasBirthDate && !normalizedBirthDate) {
+    payload.birth_date = null;
   }
 
-  if (columns.hasGender && params.gender) {
-    payload.gender = params.gender;
+  if (columns.hasBirthYear) {
+    payload.birth_year = params.birthYear ?? null;
   }
 
-  if (
-    columns.hasFacilityName &&
-    params.facilityName
-  ) {
+  if (columns.hasGender) {
+    payload.gender = params.gender ?? null;
+  }
+
+  if (columns.hasFacilityName) {
     payload.facility_name =
-      params.facilityName;
+      params.facilityName ?? null;
   }
 
-  if (columns.hasDiagnosis && params.diagnosis) {
-    payload.diagnosis = params.diagnosis;
+  if (columns.hasDiagnosis) {
+    payload.diagnosis = params.diagnosis ?? null;
   }
 
-  if (columns.hasNote && storedMemo) {
-    payload.note = storedMemo;
+  if (columns.hasNote) {
+    payload.note = storedMemo ?? null;
   }
 
-  if (columns.hasLifeMemo && storedMemo) {
-    payload.life_memo = storedMemo;
+  if (columns.hasLifeMemo) {
+    payload.life_memo = storedMemo ?? null;
   }
 
   if (columns.hasCognitiveLevel) {
@@ -571,11 +583,14 @@ function buildCreatePayload(
 
 async function ensureEntryCodeIsAvailable(
   client: SupabaseClient,
-  entryCode: string
+  entryCode: string,
+  excludedElderId?: string
 ) {
   const elders = await listMappedElders(client);
   const matchedElder = elders.find(
-    (elder) => elder.entry_code === entryCode
+    (elder) =>
+      elder.id !== excludedElderId &&
+      elder.entry_code === entryCode
   );
 
   if (matchedElder) {
@@ -650,6 +665,112 @@ export async function dbCreateElder(
     createdElder ??
     mapElderRow(data as RawElderRow)
   );
+}
+
+export async function dbUpdateElder(
+  client: SupabaseClient,
+  elderId: string,
+  params: CreateElderParams
+) {
+  const columns = await getElderColumns(client);
+  const entryCode =
+    normalizeEntryCode(params.entryCode);
+  const birthDate =
+    normalizeBirthDate(params.birthDate);
+
+  if (!entryCode) {
+    throw new Error(
+      "입장 코드를 올바르게 입력해 주세요."
+    );
+  }
+
+  if (!birthDate) {
+    throw new Error(
+      "생년월일을 올바르게 입력해 주세요."
+    );
+  }
+
+  if (
+    !columns.hasEntryCode &&
+    !columns.hasNote &&
+    !columns.hasLifeMemo
+  ) {
+    throw new Error(
+      "현재 DB 스키마에서는 입장 코드를 저장할 수 없습니다."
+    );
+  }
+
+  await ensureEntryCodeIsAvailable(
+    client,
+    entryCode,
+    elderId
+  );
+
+  const payload = buildCreatePayload(
+    {
+      ...params,
+      birthDate,
+      entryCode,
+    },
+    columns
+  );
+  const { data, error } = await client
+    .from("elders")
+    .update(payload)
+    .eq("id", elderId)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  const updatedElder = columns.hasEntryCode
+    ? mapElderRow(data as RawElderRow)
+    : (await listMappedElders(client)).find(
+        (elder) => elder.id === elderId
+      );
+
+  return (
+    updatedElder ??
+    mapElderRow(data as RawElderRow)
+  );
+}
+
+export async function dbDeactivateElder(
+  client: SupabaseClient,
+  elderId: string
+) {
+  const columns = await getElderColumns(client);
+  const payload: Record<string, unknown> = {};
+
+  if (columns.hasIsActive) {
+    payload.is_active = false;
+  }
+
+  if (columns.hasStatus) {
+    payload.status = "inactive";
+  }
+
+  if (columns.hasUpdatedAt) {
+    payload.updated_at =
+      new Date().toISOString();
+  }
+
+  if (Object.keys(payload).length === 0) {
+    throw new Error(
+      "현재 DB 스키마에서는 어르신을 삭제할 수 없습니다."
+    );
+  }
+
+  const { error } = await client
+    .from("elders")
+    .update(payload)
+    .eq("id", elderId);
+
+  if (error) {
+    throw error;
+  }
 }
 
 export async function dbFindElderByEntryCode(

@@ -31,6 +31,7 @@ import type {
   SessionCommandRecord,
   SessionMessageRecord,
   SessionRecommendationRecord,
+  SessionStatus,
   SessionRuntimeState,
 } from "@/types/session";
 
@@ -65,6 +66,8 @@ export function useSessionRuntime({
     useState(true);
   const [isEndingSession, setIsEndingSession] =
     useState(false);
+  const [sessionStatus, setSessionStatus] =
+    useState<SessionStatus>("active");
   const [error, setError] =
     useState<string | null>(null);
   const [status, setStatus] =
@@ -154,6 +157,7 @@ export function useSessionRuntime({
         currentState.emotionDetected,
         currentState
       );
+      setSessionStatus("ended");
 
       if (typeof window !== "undefined") {
         window.sessionStorage.removeItem(
@@ -287,6 +291,9 @@ export function useSessionRuntime({
       );
 
       setSessionId(nextSessionId);
+      setSessionStatus(
+        snapshot.session.status
+      );
       setMessages(snapshot.messages);
       setRecommendations(snapshot.recommendations);
       setCurrentState(
@@ -325,6 +332,7 @@ export function useSessionRuntime({
             snapshot.session.status === "active"
           ) {
             setSessionId(storedSessionId);
+            setSessionStatus("active");
             setMessages(snapshot.messages);
             setRecommendations(
               snapshot.recommendations
@@ -372,6 +380,7 @@ export function useSessionRuntime({
       });
 
       setSessionId(session.id);
+      setSessionStatus("active");
       setCurrentState(initialState);
       setMessages([openingMessage]);
       setRecommendations([]);
@@ -416,8 +425,23 @@ export function useSessionRuntime({
 
     return subscribeToSessionRuntime(sessionId, {
       onSessionChange: (session) => {
+        setSessionStatus(session.status);
+
         if (session.current_state) {
           setCurrentState(session.current_state);
+        }
+
+        if (session.status === "ended") {
+          setStatus("waiting");
+          setError(
+            "진행자가 세션을 종료했어요. 새 세션에서 다시 시작해 주세요."
+          );
+
+          if (typeof window !== "undefined") {
+            window.sessionStorage.removeItem(
+              sessionStorageKey
+            );
+          }
         }
       },
       onMessageChange: applyRealtimeMessage,
@@ -432,6 +456,7 @@ export function useSessionRuntime({
     applyRealtimeMessage,
     applyRealtimeRecommendation,
     sessionId,
+    sessionStorageKey,
   ]);
 
   const persistRuntimeState = useCallback(
@@ -454,6 +479,12 @@ export function useSessionRuntime({
     async (transcript: string) => {
       if (!sessionId) {
         return;
+      }
+
+      if (sessionStatus !== "active") {
+        throw new Error(
+          "이미 종료된 세션입니다."
+        );
       }
 
       const cleanAnswer = transcript.trim();
@@ -577,6 +608,7 @@ export function useSessionRuntime({
       messages,
       persistRuntimeState,
       sessionId,
+      sessionStatus,
     ]
   );
 
@@ -629,6 +661,7 @@ export function useSessionRuntime({
       status,
       isLoading,
       isEndingSession,
+      sessionStatus,
       error,
     }),
     [
@@ -640,6 +673,7 @@ export function useSessionRuntime({
       messages,
       recommendations,
       sessionId,
+      sessionStatus,
       status,
     ]
   );

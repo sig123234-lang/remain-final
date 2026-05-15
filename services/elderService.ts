@@ -41,11 +41,12 @@ async function dbRead<T>(
 
 async function postJson<T>(
   url: string,
+  method: "POST" | "PATCH" | "DELETE",
   body: object,
   fallbackMessage: string
 ): Promise<T> {
   const response = await fetch(url, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -77,8 +78,35 @@ export async function createElder(
 ): Promise<ElderRecord> {
   return postJson<ElderRecord>(
     "/api/admin/elders",
+    "POST",
     params,
     "어르신 등록에 실패했어요."
+  );
+}
+
+export async function updateElder(
+  elderId: string,
+  params: CreateElderParams
+) {
+  return postJson<ElderRecord>(
+    "/api/admin/elders",
+    "PATCH",
+    {
+      elderId,
+      ...params,
+    },
+    "어르신 수정에 실패했어요."
+  );
+}
+
+export async function deleteElder(
+  elderId: string
+) {
+  return postJson<{ ok: true }>(
+    "/api/admin/elders",
+    "DELETE",
+    { elderId },
+    "어르신 삭제에 실패했어요."
   );
 }
 
@@ -94,6 +122,7 @@ export async function findElderByEntryCode(
 ) {
   return postJson<ElderLoginResult>(
     "/api/talk/login",
+    "POST",
     { entryCode },
     "입장 코드를 확인하지 못했어요."
   );

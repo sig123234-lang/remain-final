@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -9,10 +10,21 @@ import {
 
 import { listEldersByIds } from "@/services/elderService";
 import { subscribeToActiveSessions } from "@/services/sessionRealtime";
-import { listActiveSessions } from "@/services/sessionService";
+import {
+  endSession,
+  listActiveSessions,
+  saveSessionSummary,
+  updateSessionMode,
+} from "@/services/sessionService";
 import { useLiveSession } from "@/hooks/useLiveSession";
 import type { ElderRecord } from "@/types/elder";
-import type { SessionRecord } from "@/types/session";
+import type {
+  SessionMode,
+  SessionRecord,
+} from "@/types/session";
+
+const ACTIVE_SESSIONS_POLL_INTERVAL_MS =
+  10_000;
 
 function upsertSession(
   sessions: SessionRecord[],
@@ -43,6 +55,7 @@ export default function AdminLiveSessionClient({
     snapshot,
     isLoading,
     error,
+    hydrate,
     issueCommand,
     sendRecommendation,
     dismissRecommendation,
@@ -57,10 +70,16 @@ export default function AdminLiveSessionClient({
   const [directQuestion, setDirectQuestion] =
     useState("");
   const [noteDraft, setNoteDraft] =
-    useState("");
+    useState<string | null>(null);
+  const [actionError, setActionError] =
+    useState<string | null>(null);
+  const [isEndingSession, setIsEndingSession] =
+    useState(false);
+  const [isSwitchingMode, setIsSwitchingMode] =
+    useState(false);
 
-  useEffect(() => {
-    const hydrateActiveSessions =
+  const hydrateActiveSessions =
+    useCallback(
       async (
         sessions: SessionRecord[]
       ) => {
@@ -74,6 +93,10 @@ export default function AdminLiveSessionClient({
             )
           ),
         ];
+
+        if (elderIds.length === 0) {
+          return;
+        }
 
         try {
           const elders =
@@ -90,43 +113,62 @@ export default function AdminLiveSessionClient({
               return accumulator;
             }, {})
           );
-        } catch {
-          setEldersById({});
-        }
-      };
+        } catch {}
+      },
+      []
+    );
 
-    const load = async () => {
+  const loadActiveSessions =
+    useCallback(async () => {
       const sessions =
         await listActiveSessions();
       await hydrateActiveSessions(
         sessions
       );
-    };
+    }, [hydrateActiveSessions]);
 
-    void load();
+  useEffect(() => {
+    const timeoutId =
+      window.setTimeout(() => {
+        void loadActiveSessions();
+      }, 0);
 
-    return subscribeToActiveSessions(
-      (session) => {
-        setActiveSessions((previous) => {
-          const nextSessions =
-            upsertSession(
-              previous,
-              session
-            ).filter(
-              (currentSession) =>
-                currentSession.status ===
-                "active"
+    const pollId = window.setInterval(() => {
+      void loadActiveSessions();
+    }, ACTIVE_SESSIONS_POLL_INTERVAL_MS);
+
+    const unsubscribe =
+      subscribeToActiveSessions(
+        (session) => {
+          setActiveSessions((previous) => {
+            const nextSessions =
+              upsertSession(
+                previous,
+                session
+              ).filter(
+                (currentSession) =>
+                  currentSession.status ===
+                  "active"
+              );
+
+            void hydrateActiveSessions(
+              nextSessions
             );
 
-          void hydrateActiveSessions(
-            nextSessions
-          );
+            return nextSessions;
+          });
+        }
+      );
 
-          return nextSessions;
-        });
-      }
-    );
-  }, []);
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.clearInterval(pollId);
+      unsubscribe();
+    };
+  }, [
+    hydrateActiveSessions,
+    loadActiveSessions,
+  ]);
 
   const currentState = useMemo(
     () => snapshot?.session.current_state,
@@ -160,6 +202,148 @@ export default function AdminLiveSessionClient({
 
   const latestCommand =
     snapshot?.commands[0] ?? null;
+  const currentMode =
+    snapshot?.session.mode ?? "collab";
+  const isSessionEnded =
+    snapshot?.session.status ===
+    "ended";
+  const sessionMeta = useMemo(() => {
+    const parts = [
+      selectedElder?.diagnosis ||
+        "회상 인터뷰 진행 중",
+      selectedElder?.facility_name,
+    ].filter(
+      (value): value is string =>
+        Boolean(value)
+    );
+
+    return parts.join(" · ");
+  }, [selectedElder]);
+  const displayedNoteDraft =
+    noteDraft ??
+    currentState?.facilitatorNote ??
+    "";
+
+  const refreshSessionView =
+    useCallback(async () => {
+      await Promise.all([
+        hydrate({ quiet: true }),
+        loadActiveSessions(),
+      ]);
+    }, [hydrate, loadActiveSessions]);
+
+  const handleModeChange =
+    useCallback(
+      async (nextMode: SessionMode) => {
+        if (
+          isSwitchingMode ||
+          isEndingSession ||
+          isSessionEnded ||
+          nextMode === currentMode
+        ) {
+          return;
+        }
+
+        setActionError(null);
+        setIsSwitchingMode(true);
+
+        try {
+          await updateSessionMode(
+            sessionId,
+            nextMode
+          );
+          await refreshSessionView();
+        } catch (caughtError) {
+          setActionError(
+            caughtError instanceof Error
+              ? caughtError.message
+              : "세션 모드를 바꾸지 못했어요."
+          );
+        } finally {
+          setIsSwitchingMode(false);
+        }
+      },
+      [
+        currentMode,
+        isEndingSession,
+        isSessionEnded,
+        isSwitchingMode,
+        refreshSessionView,
+        sessionId,
+      ]
+    );
+
+  const handleEndSession =
+    useCallback(async () => {
+      if (
+        isEndingSession ||
+        isSessionEnded ||
+        !snapshot
+      ) {
+        return;
+      }
+
+      setActionError(null);
+      setIsEndingSession(true);
+
+      try {
+        await saveSessionSummary({
+          sessionId,
+          elderId:
+            snapshot.session.elder_id,
+          summary:
+            snapshot.summary?.summary ??
+            snapshot.session.summary ??
+            snapshot.session.current_state
+              ?.sessionSummary,
+          familyFriendlySummary:
+            snapshot.summary
+              ?.family_friendly_summary ??
+            snapshot.summary?.summary ??
+            snapshot.session.summary ??
+            snapshot.session.current_state
+              ?.sessionSummary,
+          emotions:
+            snapshot.session.current_state
+              ?.emotionDetected
+              ? [
+                  snapshot.session.current_state
+                    .emotionDetected,
+                ]
+              : [],
+        });
+
+        await endSession(
+          sessionId,
+          snapshot.summary?.summary ??
+            snapshot.session.summary ??
+            snapshot.session.current_state
+              ?.sessionSummary,
+          snapshot.session.current_state
+            ?.emotionDetected ??
+            snapshot.session
+              .detected_emotion ??
+            undefined,
+          snapshot.session.current_state ??
+            undefined
+        );
+        await refreshSessionView();
+      } catch (caughtError) {
+        setActionError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : "세션을 종료하지 못했어요."
+        );
+      } finally {
+        setIsEndingSession(false);
+      }
+    }, [
+      isEndingSession,
+      isSessionEnded,
+      refreshSessionView,
+      sessionId,
+      snapshot,
+    ]);
 
   return (
     <div className="min-h-screen bg-[#f5f1ea] p-5 text-[#2d2a26]">
@@ -297,22 +481,52 @@ export default function AdminLiveSessionClient({
                 </span>
               </h2>
               <p className="mt-1 text-sm text-[#7d766d]">
-                {selectedElder
-                  ?.diagnosis ||
-                  "회상 인터뷰 진행 중"}{" "}
-                ·{" "}
-                {selectedElder
-                  ?.facility_name ||
-                  "시설 정보 없음"}
+                {sessionMeta}
               </p>
             </div>
 
             <div className="mr-6 flex items-center gap-4">
               <div className="mr-2 flex rounded-xl bg-[#f1ede5] p-1">
-                <button className="rounded-lg bg-[#6f9075] px-3 py-1.5 text-xs font-semibold text-white">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleModeChange(
+                      "collab"
+                    );
+                  }}
+                  disabled={
+                    isSwitchingMode ||
+                    isEndingSession ||
+                    isSessionEnded
+                  }
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                    currentMode ===
+                    "collab"
+                      ? "bg-[#6f9075] text-white"
+                      : "text-[#6d655c] hover:bg-white/60"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
                   협업
                 </button>
-                <button className="rounded-lg px-3 py-1.5 text-xs font-semibold text-[#6d655c]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleModeChange(
+                      "auto"
+                    );
+                  }}
+                  disabled={
+                    isSwitchingMode ||
+                    isEndingSession ||
+                    isSessionEnded
+                  }
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                    currentMode ===
+                    "auto"
+                      ? "bg-[#6f9075] text-white"
+                      : "text-[#6d655c] hover:bg-white/60"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
                   자율
                 </button>
               </div>
@@ -330,16 +544,28 @@ export default function AdminLiveSessionClient({
               <button
                 type="button"
                 onClick={() => {
-                  void issueCommand(
-                    "end_session"
-                  );
+                  void handleEndSession();
                 }}
-                className="rounded-xl bg-[#d96b6b] px-4 py-3 text-sm font-semibold text-white"
+                disabled={
+                  isEndingSession ||
+                  isSessionEnded
+                }
+                className="rounded-xl bg-[#d96b6b] px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                세션 종료
+                {isEndingSession
+                  ? "종료 중..."
+                  : isSessionEnded
+                    ? "종료됨"
+                    : "세션 종료"}
               </button>
             </div>
           </section>
+
+          {actionError && (
+            <section className="mb-5 rounded-2xl bg-[#fff2ef] px-5 py-4 text-sm text-[#8a5f57] shadow-sm">
+              {actionError}
+            </section>
+          )}
 
           <section className="flex min-h-0 flex-1 flex-col rounded-2xl bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
@@ -491,14 +717,16 @@ export default function AdminLiveSessionClient({
                     event.target.value
                   );
                 }}
+                disabled={isSessionEnded}
                 placeholder="진행자가 직접 질문을 입력해 개입할 수 있어요."
-                className="h-10 flex-1 rounded-xl border border-[#e7dfd3] bg-[#faf8f4] px-3 text-sm outline-none focus:border-[#6f9075]"
+                className="h-10 flex-1 rounded-xl border border-[#e7dfd3] bg-[#faf8f4] px-3 text-sm outline-none focus:border-[#6f9075] disabled:cursor-not-allowed disabled:opacity-60"
               />
               <button
                 type="button"
                 onClick={() => {
                   if (
-                    !directQuestion.trim()
+                    !directQuestion.trim() ||
+                    isSessionEnded
                   ) {
                     return;
                   }
@@ -510,7 +738,8 @@ export default function AdminLiveSessionClient({
                   });
                   setDirectQuestion("");
                 }}
-                className="rounded-xl bg-[#6f9075] px-4 text-sm font-semibold text-white"
+                disabled={isSessionEnded}
+                className="rounded-xl bg-[#6f9075] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 질문 보내기
               </button>
@@ -531,7 +760,9 @@ export default function AdminLiveSessionClient({
               </div>
 
               <span className="rounded-full bg-[#edf4ec] px-3 py-1.5 text-xs font-semibold text-[#6f9075]">
-                협업
+                {currentMode === "collab"
+                  ? "협업"
+                  : "자율"}
               </span>
             </div>
 
@@ -595,7 +826,8 @@ export default function AdminLiveSessionClient({
                                 recommendation
                               );
                             }}
-                            className="rounded-xl bg-[#6f9075] px-3 py-2 text-xs font-semibold text-white"
+                            disabled={isSessionEnded}
+                            className="rounded-xl bg-[#6f9075] px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             추천 질문 보내기
                           </button>
@@ -607,7 +839,8 @@ export default function AdminLiveSessionClient({
                                 recommendation.id
                               );
                             }}
-                            className="rounded-xl bg-[#f1ede5] px-3 py-2 text-xs font-semibold text-[#6d655c]"
+                            disabled={isSessionEnded}
+                            className="rounded-xl bg-[#f1ede5] px-3 py-2 text-xs font-semibold text-[#6d655c] disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             제외
                           </button>
@@ -692,6 +925,10 @@ export default function AdminLiveSessionClient({
                   key={label}
                   type="button"
                   onClick={() => {
+                    if (isSessionEnded) {
+                      return;
+                    }
+
                     void issueCommand(
                       command as
                         | "deepen"
@@ -703,7 +940,8 @@ export default function AdminLiveSessionClient({
                       }
                     );
                   }}
-                  className="h-10 rounded-xl bg-[#f7f4ee] text-sm font-semibold transition hover:bg-[#efe9de]"
+                  disabled={isSessionEnded}
+                  className="h-10 rounded-xl bg-[#f7f4ee] text-sm font-semibold transition hover:bg-[#efe9de] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {label}
                 </button>
@@ -716,28 +954,33 @@ export default function AdminLiveSessionClient({
               진행 메모
             </h3>
             <textarea
-              value={noteDraft}
+              value={displayedNoteDraft}
               onChange={(event) => {
                 setNoteDraft(
                   event.target.value
                 );
               }}
+              disabled={isSessionEnded}
               placeholder="지금 이 기억에서 지켜야 할 분위기나 주의할 감정을 적어주세요."
-              className="mt-3 h-24 w-full rounded-xl border border-[#e7dfd3] bg-[#faf8f4] p-3 text-sm outline-none"
+              className="mt-3 h-24 w-full rounded-xl border border-[#e7dfd3] bg-[#faf8f4] p-3 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60"
             />
             <button
               type="button"
               onClick={() => {
-                if (!currentState) {
+                if (
+                  !currentState ||
+                  isSessionEnded
+                ) {
                   return;
                 }
 
                 void saveFacilitatorNote(
                   currentState,
-                  noteDraft
+                  displayedNoteDraft
                 );
               }}
-              className="mt-3 h-10 w-full rounded-xl bg-[#6f9075] text-sm font-semibold text-white"
+              disabled={isSessionEnded}
+              className="mt-3 h-10 w-full rounded-xl bg-[#6f9075] text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               메모 저장
             </button>

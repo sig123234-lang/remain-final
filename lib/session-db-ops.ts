@@ -15,6 +15,7 @@ import type {
   AddMessageParams,
   CreateSessionCommandParams,
   CreateSessionParams,
+  UpdateSessionModeParams,
 } from "@/types/session-mutations";
 
 export const SESSION_SELECT = `
@@ -125,6 +126,28 @@ export async function dbUpdateSessionCurrentState(
       current_action: currentState.action,
       detected_emotion:
         currentState.emotionDetected,
+      last_activity_at:
+        new Date().toISOString(),
+    })
+    .eq("id", sessionId)
+    .select(SESSION_SELECT)
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data as SessionRecord;
+}
+
+export async function dbUpdateSessionMode(
+  client: SupabaseClient,
+  { sessionId, mode }: UpdateSessionModeParams
+) {
+  const { data, error } = await client
+    .from("sessions")
+    .update({
+      mode,
       last_activity_at:
         new Date().toISOString(),
     })

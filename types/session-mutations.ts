@@ -36,3 +36,8 @@ export interface CreateSessionCommandParams {
   payload?: Record<string, unknown>;
   issuedBy: string;
 }
+
+export interface UpdateSessionModeParams {
+  sessionId: string;
+  mode: SessionMode;
+}

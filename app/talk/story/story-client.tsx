@@ -33,6 +33,7 @@ export default function StoryClientPage({
     currentQuestion,
     currentState,
     error,
+    sessionStatus,
     status,
     setStatus,
     processUserTurn,
@@ -242,6 +243,9 @@ export default function StoryClientPage({
     };
 
   const handleVoiceButton = () => {
+    if (sessionStatus !== "active") {
+      return;
+    }
 
     if (status === "waiting") {
       speak(currentQuestion);
@@ -269,6 +273,17 @@ export default function StoryClientPage({
 
   useEffect(() => {
     if (
+      sessionStatus === "active" ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+  }, [sessionStatus]);
+
+  useEffect(() => {
+    if (
       !activeCommandId ||
       activeCommandId ===
         spokenCommandRef.current ||
@@ -293,6 +308,11 @@ export default function StoryClientPage({
   ]);
 
   const lastAnswer = transcript;
+  const statusMessage =
+    sessionStatus === "active"
+      ? browserError || error
+      : error ||
+        "진행자가 세션을 종료했어요. 새 세션에서 다시 시작해 주세요.";
   const questionTextClass =
     getQuestionTextClass(
       preferences.fontSize
@@ -327,10 +347,10 @@ export default function StoryClientPage({
               {currentQuestion}
             </h3>
 
-            {(browserError || error) && (
+            {statusMessage && (
               <div className="mt-6 rounded-[24px] bg-[#fff2ef] px-5 py-4 text-left shadow-sm ring-1 ring-[#f1d4c9]">
                 <p className="text-sm leading-[1.7] text-[#7a564f]">
-                  {browserError || error}
+                  {statusMessage}
                 </p>
               </div>
             )}

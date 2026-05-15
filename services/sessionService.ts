@@ -2,6 +2,7 @@ import type {
   SessionCommandRecord,
   SessionCommandStatus,
   SessionMessageRecord,
+  SessionMode,
   SessionRecommendationInput,
   SessionRecommendationRecord,
   SessionRecommendationStatus,
@@ -20,6 +21,7 @@ export type {
   AddMessageParams,
   CreateSessionCommandParams,
   CreateSessionParams,
+  UpdateSessionModeParams,
 } from "@/types/session-mutations";
 
 async function sessionWrite<T>(
@@ -171,6 +173,17 @@ export async function updateSessionCurrentState(
     op: "updateSessionCurrentState",
     sessionId,
     currentState,
+  });
+}
+
+export async function updateSessionMode(
+  sessionId: string,
+  mode: SessionMode
+) {
+  return sessionWrite<SessionRecord>({
+    op: "updateSessionMode",
+    sessionId,
+    mode,
   });
 }
 

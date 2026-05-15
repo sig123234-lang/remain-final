@@ -10,6 +10,7 @@ import {
   dbUpdateCommandStatus,
   dbUpdateRecommendationStatus,
   dbUpdateSessionCurrentState,
+  dbUpdateSessionMode,
 } from "@/lib/session-db-ops";
 import { getSupabaseServiceRoleClient } from "@/lib/supabase/admin";
 import type {
@@ -37,6 +38,11 @@ type SessionWriteBody =
       op: "updateSessionCurrentState";
       sessionId: string;
       currentState: SessionRuntimeState;
+    }
+  | {
+      op: "updateSessionMode";
+      sessionId: string;
+      mode: "collab" | "auto";
     }
   | {
       op: "createSessionRecommendations";
@@ -182,6 +188,22 @@ export async function POST(
             supabase,
             body.sessionId,
             body.currentState
+          );
+
+        return NextResponse.json({
+          data,
+        });
+      }
+
+      case "updateSessionMode": {
+        const data =
+          await dbUpdateSessionMode(
+            supabase,
+            {
+              sessionId:
+                body.sessionId,
+              mode: body.mode,
+            }
           );
 
         return NextResponse.json({
