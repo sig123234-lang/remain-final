@@ -2,11 +2,19 @@
 
 import {
   useEffect,
+  useMemo,
+  Suspense,
   useState,
 } from "react";
+import { useSearchParams } from "next/navigation";
 
 import Header from "@/components/talk/Header";
 import BottomTab from "@/components/talk/BottomTab";
+import {
+  getBodyTextClass,
+  getQuestionTextClass,
+} from "@/lib/preferences";
+import { useTalkPreferencesStore } from "@/hooks/usePreferenceStore";
 
 import {
   getElderSessions,
@@ -25,18 +33,33 @@ type Session = {
   }[];
 };
 
-export default function RecordsPage() {
-  const elderId =
-    typeof window === "undefined"
-      ? null
-      : new URLSearchParams(
-          window.location.search
-        ).get("elderId") ??
-        REMAIN_DEFAULT_ELDER_ID;
+function RecordsPageBody({
+  elderId,
+}: {
+  elderId: string;
+}) {
+  const { preferences } =
+    useTalkPreferencesStore();
   const [sessions, setSessions] =
     useState<Session[]>([]);
   const [loading, setLoading] =
     useState(true);
+  const titleTextClass =
+    useMemo(
+      () =>
+        getQuestionTextClass(
+          preferences.fontSize
+        ),
+      [preferences.fontSize]
+    );
+  const bodyTextClass =
+    useMemo(
+      () =>
+        getBodyTextClass(
+          preferences.fontSize
+        ),
+      [preferences.fontSize]
+    );
 
   useEffect(() => {
     if (!elderId) {
@@ -117,7 +140,9 @@ export default function RecordsPage() {
                         ).toLocaleString()}
                       </p>
 
-                      <h3 className="mt-2 text-[22px] font-black leading-[1.4]">
+                      <h3
+                        className={`mt-2 font-black leading-[1.4] ${titleTextClass}`}
+                      >
                         함께 나눈 이야기
                       </h3>
                     </div>
@@ -134,7 +159,9 @@ export default function RecordsPage() {
                       기억의 한 조각
                     </p>
 
-                    <p className="mt-3 text-[17px] leading-[1.8] text-[#5e5148]">
+                    <p
+                      className={`mt-3 leading-[1.8] text-[#5e5148] ${bodyTextClass}`}
+                    >
                       {firstUserMessage
                         ?.content ||
                         "따뜻한 이야기를 나누셨어요."}
@@ -164,5 +191,33 @@ export default function RecordsPage() {
 
       <BottomTab />
     </div>
+  );
+}
+
+function RecordsPageContent() {
+  const searchParams =
+    useSearchParams();
+  const elderId =
+    searchParams.get("elderId") ??
+    REMAIN_DEFAULT_ELDER_ID;
+
+  return (
+    <RecordsPageBody elderId={elderId} />
+  );
+}
+
+export default function RecordsPage() {
+  return (
+    <Suspense
+      fallback={
+        <RecordsPageBody
+          elderId={
+            REMAIN_DEFAULT_ELDER_ID
+          }
+        />
+      }
+    >
+      <RecordsPageContent />
+    </Suspense>
   );
 }

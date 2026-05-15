@@ -12,16 +12,13 @@ import Header from "@/components/talk/Header";
 import SeasonalOrb from "@/components/talk/SeasonalOrb";
 import VoiceActionButton from "@/components/talk/VoiceActionButton";
 import { useBrowserSpeechTranscriber } from "@/hooks/useBrowserSpeechTranscriber";
+import { useTalkPreferencesStore } from "@/hooks/usePreferenceStore";
 import { useSessionRuntime } from "@/hooks/useSessionRuntime";
 import {
   getBodyTextClass,
   getQuestionTextClass,
   getSpeechRateValue,
-  loadTalkPreferences,
   pickPreferredVoice,
-  PREFERENCES_UPDATED_EVENT,
-  TALK_PREFERENCES_KEY,
-  type TalkPreferences,
 } from "@/lib/preferences";
 
 export default function StoryClientPage({
@@ -54,80 +51,14 @@ export default function StoryClientPage({
   } = useBrowserSpeechTranscriber();
   const [browserError, setBrowserError] =
     useState<string | null>(null);
-  const [
-    preferences,
-    setPreferences,
-  ] = useState<TalkPreferences>(
-    loadTalkPreferences()
-  );
+  const { preferences } =
+    useTalkPreferencesStore();
   const spokenCommandRef =
     useRef<string | null>(null);
   const activeCommandId =
     currentState.activeCommandId;
   const hasSession =
     Boolean(sessionId);
-
-  useEffect(() => {
-    const syncPreferences = () => {
-      setPreferences(
-        loadTalkPreferences()
-      );
-    };
-
-    const handleStorage = (
-      event: StorageEvent
-    ) => {
-      if (
-        event.key &&
-        event.key !==
-          TALK_PREFERENCES_KEY
-      ) {
-        return;
-      }
-
-      syncPreferences();
-    };
-
-    const handleCustomEvent =
-      (
-        event: Event
-      ) => {
-        const customEvent =
-          event as CustomEvent<{
-            key?: string;
-          }>;
-
-        if (
-          customEvent.detail?.key &&
-          customEvent.detail.key !==
-            TALK_PREFERENCES_KEY
-        ) {
-          return;
-        }
-
-        syncPreferences();
-      };
-
-    window.addEventListener(
-      "storage",
-      handleStorage
-    );
-    window.addEventListener(
-      PREFERENCES_UPDATED_EVENT,
-      handleCustomEvent
-    );
-
-    return () => {
-      window.removeEventListener(
-        "storage",
-        handleStorage
-      );
-      window.removeEventListener(
-        PREFERENCES_UPDATED_EVENT,
-        handleCustomEvent
-      );
-    };
-  }, []);
 
   const speak = useCallback(
     (text: string) => {
