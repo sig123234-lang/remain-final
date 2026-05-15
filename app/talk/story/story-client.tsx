@@ -33,12 +33,16 @@ export default function StoryClientPage({
     currentQuestion,
     currentState,
     error,
+    initializeSession,
+    isLoading,
+    sessionId,
     sessionStatus,
     status,
     setStatus,
     processUserTurn,
   } = useSessionRuntime({
     elderId,
+    autoInitialize: false,
   });
 
   const {
@@ -60,6 +64,8 @@ export default function StoryClientPage({
     useRef<string | null>(null);
   const activeCommandId =
     currentState.activeCommandId;
+  const hasSession =
+    Boolean(sessionId);
 
   useEffect(() => {
     const syncPreferences = () => {
@@ -242,7 +248,30 @@ export default function StoryClientPage({
       }
     };
 
-  const handleVoiceButton = () => {
+  const handleVoiceButton =
+    async () => {
+    if (isLoading) {
+      return;
+    }
+
+    if (!sessionId) {
+      setBrowserError(null);
+      setStatus("thinking");
+
+      const nextSessionId =
+        await initializeSession();
+
+      if (!nextSessionId) {
+        setStatus("waiting");
+        return;
+      }
+
+      setTimeout(() => {
+        speak(currentQuestion);
+      }, 300);
+      return;
+    }
+
     if (sessionStatus !== "active") {
       return;
     }
@@ -313,6 +342,10 @@ export default function StoryClientPage({
       ? browserError || error
       : error ||
         "진행자가 세션을 종료했어요. 새 세션에서 다시 시작해 주세요.";
+  const headline =
+    hasSession
+      ? currentQuestion
+      : "준비가 되면 아래 버튼을 눌러 이야기를 시작해요.";
   const questionTextClass =
     getQuestionTextClass(
       preferences.fontSize
@@ -338,13 +371,15 @@ export default function StoryClientPage({
 
           <div className="mt-10 text-center">
             <p className="text-sm font-bold text-[#8a715c]">
-              이야기 도우미가 여쭤볼게요
+              {hasSession
+                ? "이야기 도우미가 여쭤볼게요"
+                : "이야기 도우미가 기다리고 있어요"}
             </p>
 
             <h3
               className={`mt-5 font-black leading-[1.5] tracking-tight ${questionTextClass}`}
             >
-              {currentQuestion}
+              {headline}
             </h3>
 
             {statusMessage && (
@@ -373,7 +408,9 @@ export default function StoryClientPage({
           <div className="mt-10 w-full">
             <VoiceActionButton
               status={status}
-              onClick={handleVoiceButton}
+              onClick={() => {
+                void handleVoiceButton();
+              }}
             />
           </div>
         </main>

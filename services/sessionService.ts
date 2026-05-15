@@ -10,6 +10,7 @@ import type {
   SessionSnapshot,
   SessionSummaryRecord,
   SessionRecord,
+  SessionWithSummaryRecord,
 } from "@/types/session";
 import type {
   AddMessageParams,
@@ -145,6 +146,14 @@ export async function listSessions() {
   return dbRead<SessionRecord[]>({
     op: "listSessions",
   });
+}
+
+export async function listSessionsWithSummaries() {
+  return dbRead<SessionWithSummaryRecord[]>(
+    {
+      op: "listSessionsWithSummaries",
+    }
+  );
 }
 
 export async function addMessage(

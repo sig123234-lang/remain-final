@@ -227,7 +227,7 @@ export default async function TodayPage({
             href={storyHref}
             className="mt-2 flex h-20 items-center justify-center rounded-[34px] bg-[#8ba77c] text-[22px] font-black text-white shadow-[0_18px_42px_rgba(99,125,86,0.3)]"
           >
-            오늘 이야기 이어가기
+            오늘 이야기 시작하기
           </a>
         </main>
       </div>

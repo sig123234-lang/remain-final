@@ -13,6 +13,7 @@ import {
   dbListElders,
   dbListEldersByIds,
   dbListSessions,
+  dbListSessionsWithSummaries,
 } from "@/lib/db-read-ops";
 import { getSupabaseServiceRoleClient } from "@/lib/supabase/admin";
 
@@ -22,6 +23,7 @@ type DbReadBody =
   | { op: "listEldersByIds"; elderIds: string[] }
   | { op: "listActiveSessions" }
   | { op: "listSessions" }
+  | { op: "listSessionsWithSummaries" }
   | { op: "getSession"; sessionId: string }
   | { op: "getSessionMessages"; sessionId: string }
   | {
@@ -117,6 +119,13 @@ export async function POST(request: Request) {
       case "listSessions":
         return NextResponse.json({
           data: await dbListSessions(supabase),
+        });
+      case "listSessionsWithSummaries":
+        return NextResponse.json({
+          data:
+            await dbListSessionsWithSummaries(
+              supabase
+            ),
         });
       case "getSession":
         return NextResponse.json({

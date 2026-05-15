@@ -10,6 +10,7 @@ import type {
   SessionRecommendationRecord,
   SessionRecord,
   SessionSummaryRecord,
+  SessionWithSummaryRecord,
 } from "@/types/session";
 
 /**
@@ -117,6 +118,25 @@ export async function dbListSessions(
   }
 
   return (data ?? []) as unknown as SessionRecord[];
+}
+
+export async function dbListSessionsWithSummaries(
+  client: SupabaseClient
+) {
+  const { data, error } = await client
+    .from("sessions")
+    .select(
+      `${SESSION_SELECT}, session_summaries (*)`
+    )
+    .order("started_at", {
+      ascending: false,
+    });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? []) as SessionWithSummaryRecord[];
 }
 
 export async function dbGetSessionMessages(

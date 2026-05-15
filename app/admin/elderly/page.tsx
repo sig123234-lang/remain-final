@@ -322,7 +322,7 @@ export default function AdminElderlyPage() {
 
                   <div className="flex flex-wrap gap-2">
                     <Link
-                      href={`/talk/story?elderId=${elder.id}`}
+                      href={`/talk/today?elderId=${elder.id}`}
                       className="rounded-xl bg-[#6f9075] px-4 py-3 text-sm font-semibold text-white"
                     >
                       대화 시작

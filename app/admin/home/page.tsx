@@ -202,7 +202,7 @@ export default function AdminHomePage() {
                     </div>
 
                     <Link
-                      href={`/talk/story?elderId=${elder.id}`}
+                      href={`/talk/today?elderId=${elder.id}`}
                       className="rounded-full bg-[#edf4ec] px-4 py-2 text-sm text-[#67836b]"
                     >
                       대화 시작

@@ -21,7 +21,12 @@ import type {
 } from "@/types/session";
 
 export function useLiveSession(
-  sessionId: string
+  sessionId: string,
+  {
+    enableRealtimeMonitor = true,
+  }: {
+    enableRealtimeMonitor?: boolean;
+  } = {}
 ) {
   const [snapshot, setSnapshot] =
     useState<SessionSnapshot | null>(
@@ -67,6 +72,12 @@ export function useLiveSession(
         void hydrate();
       }, 0);
 
+    if (!enableRealtimeMonitor) {
+      return () => {
+        window.clearTimeout(timeoutId);
+      };
+    }
+
     // 운영 RLS 가 anon SELECT 를 막아 realtime 으로 변경 이벤트가 안 들어온다.
     // 진행자 UI 가 죽지 않도록 7초 간격으로 quiet hydrate.
     const pollId = window.setInterval(() => {
@@ -77,10 +88,16 @@ export function useLiveSession(
       window.clearTimeout(timeoutId);
       window.clearInterval(pollId);
     };
-  }, [hydrate]);
+  }, [
+    enableRealtimeMonitor,
+    hydrate,
+  ]);
 
   useEffect(() => {
-    if (!sessionId) {
+    if (
+      !sessionId ||
+      !enableRealtimeMonitor
+    ) {
       return;
     }
 
@@ -240,7 +257,10 @@ export function useLiveSession(
         },
       }
     );
-  }, [sessionId]);
+  }, [
+    enableRealtimeMonitor,
+    sessionId,
+  ]);
 
   const issueCommand =
     useCallback(

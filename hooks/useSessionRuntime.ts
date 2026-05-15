@@ -13,6 +13,7 @@ import {
   REMAIN_DEFAULT_ELDER_ID,
   REMAIN_FIRST_QUESTION,
 } from "@/lib/remain-config";
+import { loadAdminPreferences } from "@/lib/preferences";
 import {
   addMessage,
   createInitialRuntimeState,
@@ -45,12 +46,14 @@ interface UseSessionRuntimeParams {
   elderId?: string;
   firstQuestion?: string;
   facilityId?: string;
+  autoInitialize?: boolean;
 }
 
 export function useSessionRuntime({
   elderId,
   firstQuestion = REMAIN_FIRST_QUESTION,
   facilityId,
+  autoInitialize = true,
 }: UseSessionRuntimeParams) {
   const [sessionId, setSessionId] =
     useState<string | null>(null);
@@ -63,7 +66,7 @@ export function useSessionRuntime({
       createInitialRuntimeState(firstQuestion)
     );
   const [isLoading, setIsLoading] =
-    useState(true);
+    useState(autoInitialize);
   const [isEndingSession, setIsEndingSession] =
     useState(false);
   const [sessionStatus, setSessionStatus] =
@@ -140,16 +143,22 @@ export function useSessionRuntime({
     setIsEndingSession(true);
 
     try {
-      await saveSessionSummary({
-        sessionId,
-        elderId: effectiveElderId,
-        summary: currentState.sessionSummary,
-        familyFriendlySummary:
-          currentState.sessionSummary,
-        emotions: [
-          currentState.emotionDetected,
-        ],
-      });
+      if (
+        loadAdminPreferences()
+          .autoSummary
+      ) {
+        await saveSessionSummary({
+          sessionId,
+          elderId: effectiveElderId,
+          summary:
+            currentState.sessionSummary,
+          familyFriendlySummary:
+            currentState.sessionSummary,
+          emotions: [
+            currentState.emotionDetected,
+          ],
+        });
+      }
 
       await endSession(
         sessionId,
@@ -344,7 +353,7 @@ export function useSessionRuntime({
                 )
             );
             setIsLoading(false);
-            return;
+            return storedSessionId;
           }
         } catch {
           // 저장된 세션 ID 가 더 이상 유효하지 않거나 RLS 로 SELECT 가 막혔을 때
@@ -391,6 +400,8 @@ export function useSessionRuntime({
           session.id
         );
       }
+
+      return session.id;
     } catch (caughtError) {
       const message =
         caughtError instanceof Error
@@ -398,6 +409,7 @@ export function useSessionRuntime({
           : "세션을 준비하지 못했어요.";
 
       setError(message);
+      return null;
     } finally {
       setIsLoading(false);
     }
@@ -409,6 +421,10 @@ export function useSessionRuntime({
   ]);
 
   useEffect(() => {
+    if (!autoInitialize) {
+      return;
+    }
+
     const timeoutId = window.setTimeout(() => {
       void initializeSession();
     }, 0);
@@ -416,7 +432,7 @@ export function useSessionRuntime({
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [initializeSession]);
+  }, [autoInitialize, initializeSession]);
 
   useEffect(() => {
     if (!sessionId) {

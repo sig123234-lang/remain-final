@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { useAdminPreferencesStore } from "@/hooks/usePreferenceStore";
 import { listActiveSessions } from "@/services/sessionService";
 import { subscribeToActiveSessions } from "@/services/sessionRealtime";
 import type { SessionRecord } from "@/types/session";
@@ -27,6 +28,8 @@ function upsertSession(
 }
 
 export default function AdminLivePage() {
+  const { preferences } =
+    useAdminPreferencesStore();
   const [sessions, setSessions] = useState<
     SessionRecord[]
   >([]);
@@ -58,11 +61,18 @@ export default function AdminLivePage() {
       }
     };
 
-    void load();
+    const timeoutId =
+      window.setTimeout(() => {
+        void load();
+      }, 0);
 
-    // 운영 DB sessions 테이블이 anon SELECT 를 RLS 로 막고 있어 Supabase realtime 채널
-    // 은 변경 이벤트를 어드민 클라이언트에 전달하지 못한다. (RLS 통과한 행만 push)
-    // 그래서 best-effort realtime + 10초 폴링 백업 둘 다 건다.
+    if (!preferences.realtimeMonitor) {
+      return () => {
+        cancelled = true;
+        window.clearTimeout(timeoutId);
+      };
+    }
+
     const pollId = window.setInterval(() => {
       void load();
     }, POLL_INTERVAL_MS);
@@ -84,10 +94,11 @@ export default function AdminLivePage() {
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timeoutId);
       window.clearInterval(pollId);
       unsubscribe();
     };
-  }, []);
+  }, [preferences.realtimeMonitor]);
 
   return (
     <div className="min-h-screen bg-[#f7f4ee] p-6 text-[#2d2a26]">
@@ -100,14 +111,46 @@ export default function AdminLivePage() {
             <p className="mt-2 text-[#6f5d50]">
               어르신 대화와 진행자 개입을 같은 세션 단위로 운영합니다.
             </p>
+            {!preferences.realtimeMonitor && (
+              <p className="mt-2 text-sm font-semibold text-[#8a715c]">
+                운영 설정에서 실시간 모니터가 꺼져 있어 현재 화면은 자동 갱신되지 않습니다.
+              </p>
+            )}
           </div>
 
-          <Link
-            href="/admin/home"
-            className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold shadow-sm"
-          >
-            운영 홈으로
-          </Link>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setIsLoading(true);
+                void listActiveSessions()
+                  .then((data) => {
+                    setSessions(data);
+                    setError(null);
+                  })
+                  .catch((caughtError) => {
+                    setError(
+                      caughtError instanceof
+                        Error
+                        ? caughtError.message
+                        : "진행 세션을 불러오지 못했어요."
+                    );
+                  })
+                  .finally(() => {
+                    setIsLoading(false);
+                  });
+              }}
+              className="rounded-2xl bg-[#edf4ec] px-5 py-3 text-sm font-semibold text-[#5f7b62] shadow-sm"
+            >
+              새로고침
+            </button>
+            <Link
+              href="/admin/home"
+              className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold shadow-sm"
+            >
+              운영 홈으로
+            </Link>
+          </div>
         </div>
 
         {error && (

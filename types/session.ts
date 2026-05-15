@@ -115,6 +115,13 @@ export interface SessionSummaryRecord {
   created_at?: string | null;
 }
 
+export interface SessionWithSummaryRecord
+  extends SessionRecord {
+  session_summaries?:
+    | SessionSummaryRecord[]
+    | null;
+}
+
 export interface SessionRecommendationRecord {
   id: string;
   session_id: string;

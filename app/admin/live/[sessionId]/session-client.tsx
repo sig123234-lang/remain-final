@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 
+import { useAdminPreferencesStore } from "@/hooks/usePreferenceStore";
 import { listEldersByIds } from "@/services/elderService";
 import { subscribeToActiveSessions } from "@/services/sessionRealtime";
 import {
@@ -51,6 +52,8 @@ export default function AdminLiveSessionClient({
 }: {
   sessionId: string;
 }) {
+  const { preferences } =
+    useAdminPreferencesStore();
   const {
     snapshot,
     isLoading,
@@ -60,7 +63,10 @@ export default function AdminLiveSessionClient({
     sendRecommendation,
     dismissRecommendation,
     saveFacilitatorNote,
-  } = useLiveSession(sessionId);
+  } = useLiveSession(sessionId, {
+    enableRealtimeMonitor:
+      preferences.realtimeMonitor,
+  });
   const [activeSessions, setActiveSessions] =
     useState<SessionRecord[]>([]);
   const [eldersById, setEldersById] =
@@ -133,6 +139,12 @@ export default function AdminLiveSessionClient({
         void loadActiveSessions();
       }, 0);
 
+    if (!preferences.realtimeMonitor) {
+      return () => {
+        window.clearTimeout(timeoutId);
+      };
+    }
+
     const pollId = window.setInterval(() => {
       void loadActiveSessions();
     }, ACTIVE_SESSIONS_POLL_INTERVAL_MS);
@@ -168,6 +180,7 @@ export default function AdminLiveSessionClient({
   }, [
     hydrateActiveSessions,
     loadActiveSessions,
+    preferences.realtimeMonitor,
   ]);
 
   const currentState = useMemo(
@@ -287,31 +300,33 @@ export default function AdminLiveSessionClient({
       setIsEndingSession(true);
 
       try {
-        await saveSessionSummary({
-          sessionId,
-          elderId:
-            snapshot.session.elder_id,
-          summary:
-            snapshot.summary?.summary ??
-            snapshot.session.summary ??
-            snapshot.session.current_state
-              ?.sessionSummary,
-          familyFriendlySummary:
-            snapshot.summary
-              ?.family_friendly_summary ??
-            snapshot.summary?.summary ??
-            snapshot.session.summary ??
-            snapshot.session.current_state
-              ?.sessionSummary,
-          emotions:
-            snapshot.session.current_state
-              ?.emotionDetected
-              ? [
-                  snapshot.session.current_state
-                    .emotionDetected,
-                ]
-              : [],
-        });
+        if (preferences.autoSummary) {
+          await saveSessionSummary({
+            sessionId,
+            elderId:
+              snapshot.session.elder_id,
+            summary:
+              snapshot.summary?.summary ??
+              snapshot.session.summary ??
+              snapshot.session.current_state
+                ?.sessionSummary,
+            familyFriendlySummary:
+              snapshot.summary
+                ?.family_friendly_summary ??
+              snapshot.summary?.summary ??
+              snapshot.session.summary ??
+              snapshot.session.current_state
+                ?.sessionSummary,
+            emotions:
+              snapshot.session.current_state
+                ?.emotionDetected
+                ? [
+                    snapshot.session.current_state
+                      .emotionDetected,
+                  ]
+                : [],
+          });
+        }
 
         await endSession(
           sessionId,
@@ -340,6 +355,7 @@ export default function AdminLiveSessionClient({
     }, [
       isEndingSession,
       isSessionEnded,
+      preferences.autoSummary,
       refreshSessionView,
       sessionId,
       snapshot,
@@ -360,6 +376,11 @@ export default function AdminLiveSessionClient({
             <p className="mt-1 text-xs text-white/45">
               회상 인터뷰 운영센터
             </p>
+            {!preferences.realtimeMonitor && (
+              <p className="mt-3 text-[11px] font-semibold text-[#d5c6a9]">
+                수동 모니터 모드
+              </p>
+            )}
           </div>
 
           <div className="mb-4 rounded-2xl bg-white/8 p-3">
@@ -486,6 +507,16 @@ export default function AdminLiveSessionClient({
             </div>
 
             <div className="mr-6 flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() => {
+                  void refreshSessionView();
+                }}
+                className="rounded-xl bg-[#f1ede5] px-4 py-3 text-sm font-semibold text-[#6d655c]"
+              >
+                새로고침
+              </button>
+
               <div className="mr-2 flex rounded-xl bg-[#f1ede5] p-1">
                 <button
                   type="button"

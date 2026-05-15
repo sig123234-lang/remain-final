@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 
+import { REMAIN_CHAT_MODEL } from "@/lib/ai-config";
 import type { ChatCompletionPayload } from "@/types/session";
 
 const openai = new OpenAI({
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
 
     const completion =
       await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: REMAIN_CHAT_MODEL,
 
         response_format: {
           type: "json_object",
