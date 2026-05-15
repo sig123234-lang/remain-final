@@ -133,31 +133,58 @@ function mergeObject<T extends object>(
   }
 }
 
-export function loadTalkPreferences() {
-  return mergeObject(
+/**
+ * 캐싱 critical: 이 load 함수들은 `useSyncExternalStore` 의 getSnapshot 으로
+ * 매 render 마다 호출된다. `mergeObject` 가 객체 spread 로 새 reference 를
+ * 반환하면 React 가 "snapshot이 매 render 마다 바뀐다" 로 판단하고
+ *   "The result of getSnapshot should be cached to avoid an infinite loop"
+ * 를 throw → 컴포넌트 트리 unmount → 빈 화면.
+ *
+ * localStorage raw string 이 같으면 같은 객체 reference 를 돌려준다.
+ */
+type PreferenceCache<T> = {
+  raw: string | null;
+  value: T;
+} | null;
+
+let talkCache: PreferenceCache<TalkPreferences> =
+  null;
+let familyCache: PreferenceCache<FamilyPreferences> =
+  null;
+let adminCache: PreferenceCache<AdminPreferences> =
+  null;
+
+export function loadTalkPreferences(): TalkPreferences {
+  const raw = readRaw(TALK_PREFERENCES_KEY);
+  if (talkCache && talkCache.raw === raw) {
+    return talkCache.value;
+  }
+  const value = mergeObject(
     defaultTalkPreferences,
-    readRaw(
-      TALK_PREFERENCES_KEY
-    )
+    raw
   );
+  talkCache = { raw, value };
+  return value;
 }
 
 export function saveTalkPreferences(
   preferences: TalkPreferences
 ) {
-  writeRaw(
-    TALK_PREFERENCES_KEY,
-    preferences
-  );
+  writeRaw(TALK_PREFERENCES_KEY, preferences);
+  talkCache = null;
 }
 
-export function loadFamilyPreferences() {
-  return mergeObject(
+export function loadFamilyPreferences(): FamilyPreferences {
+  const raw = readRaw(FAMILY_PREFERENCES_KEY);
+  if (familyCache && familyCache.raw === raw) {
+    return familyCache.value;
+  }
+  const value = mergeObject(
     defaultFamilyPreferences,
-    readRaw(
-      FAMILY_PREFERENCES_KEY
-    )
+    raw
   );
+  familyCache = { raw, value };
+  return value;
 }
 
 export function saveFamilyPreferences(
@@ -167,15 +194,20 @@ export function saveFamilyPreferences(
     FAMILY_PREFERENCES_KEY,
     preferences
   );
+  familyCache = null;
 }
 
-export function loadAdminPreferences() {
-  return mergeObject(
+export function loadAdminPreferences(): AdminPreferences {
+  const raw = readRaw(ADMIN_PREFERENCES_KEY);
+  if (adminCache && adminCache.raw === raw) {
+    return adminCache.value;
+  }
+  const value = mergeObject(
     defaultAdminPreferences,
-    readRaw(
-      ADMIN_PREFERENCES_KEY
-    )
+    raw
   );
+  adminCache = { raw, value };
+  return value;
 }
 
 export function saveAdminPreferences(
@@ -185,6 +217,7 @@ export function saveAdminPreferences(
     ADMIN_PREFERENCES_KEY,
     preferences
   );
+  adminCache = null;
 }
 
 export function getSpeechRateValue(
