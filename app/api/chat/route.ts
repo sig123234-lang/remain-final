@@ -1,7 +1,46 @@
 import OpenAI from "openai";
 
 import { REMAIN_CHAT_MODEL } from "@/lib/ai-config";
+import { INTERVIEWER_SYSTEM_PROMPT_V8 } from "@/lib/ai-prompts";
 import type { ChatCompletionPayload } from "@/types/session";
+
+// 현재 프런트엔드 ChatCompletionPayload 와 호환되는 JSON 출력 강제.
+// v8 프롬프트의 출력 형식 섹션은 풍부한 스키마지만, frontend 가 아직
+// recommendations 배열 형태를 쓰므로 transition 단계에서는 둘을 동시에
+// 만족시키는 호환 schema 를 시스템 메시지로 한 번 더 못박는다.
+const OUTPUT_FORMAT_OVERRIDE = `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+현재 클라이언트 호환 출력 형식 (이 형식만 사용)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+위 "출력 형식" 섹션은 무시하고 반드시 아래 JSON 객체 하나만 출력한다.
+필드 이름·타입을 절대 바꾸지 마라. recommendations 는 3개 채운다.
+
+{
+  "speech": "어르신에게 말할 실제 문장 (반드시 꼬리 포함)",
+  "tts_text": "TTS 최적화 문장",
+  "depthLevel": 1,
+  "emotionDetected": "nostalgic",
+  "riskLevel": "low",
+  "action": "deepen|continue|branch|soften|transition|listen|cooldown|end|stop_and_handoff",
+  "responsePattern": "A",
+  "questionType": "F|P|S|E|C|V",
+  "tailType": "depth|transition|shift",
+  "facilitatorNote": "진행자 참고 메모",
+  "sessionSummaryUpdate": "짧은 누적 요약",
+  "turnSummary": "이번 턴 요약",
+  "recommendations": [
+    {
+      "question": "진행자가 다음 턴에 사용할 수 있는 대안 질문",
+      "rationale": "왜 이 질문이 좋은지 (절대 규칙 위반 없게)",
+      "targetEmotion": "안정감|그리움|호기심|...",
+      "targetDepth": 2,
+      "targetMemory": "관련 기억 키워드",
+      "riskFlag": "low|medium|high"
+    }
+  ]
+}
+`;
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -31,63 +70,20 @@ export async function POST(req: Request) {
 
         messages: [
           {
+            // 회상치료_실행_프롬프트_v8.md 전문. 절대 규칙·핵심 규칙·예시 모두 포함.
+            // 마지막 출력 형식 섹션은 OUTPUT_FORMAT_OVERRIDE 가 클라이언트 호환
+            // 스키마로 덮어쓴다.
             role: "system",
-
-            content: `
-당신은 remAIn의 회상치료 AI 인터뷰어입니다.
-
-반드시 JSON만 출력하세요.
-
-절대 규칙:
-- 반드시 직전 어르신 답변을 이어서 반응하세요.
-- 질문은 한 번에 하나만.
-- 짧고 따뜻하게.
-- 같은 질문 반복 금지.
-- 어르신 감정을 AI가 멋대로 해석 금지.
-- 희망편향 금지.
-- 반드시 꼬리 질문 포함.
-- "천천히 이야기 이어가볼까요?" 같은 fallback 금지.
-
-반드시 아래 JSON 형식만 출력하세요.
-
-{
-  "speech": "어르신에게 말할 실제 문장",
-  "tts_text": "TTS용 문장",
-  "depthLevel": 1,
-  "emotionDetected": "nostalgic",
-  "riskLevel": "low",
-  "action": "continue",
-  "responsePattern": "A",
-  "questionType": "P",
-  "tailType": "depth",
-  "facilitatorNote": "진행자 참고 메모",
-  "sessionSummaryUpdate": "짧은 요약",
-  "turnSummary": "현재 턴 요약",
-  "recommendations": [
-    {
-      "question": "진행자가 선택할 수 있는 추천 질문",
-      "rationale": "왜 이 질문이 좋은지",
-      "targetEmotion": "안정감",
-      "targetDepth": 2,
-      "targetMemory": "겨울 음식과 가족 식사",
-      "riskFlag": "low"
-    }
-  ]
-}
-`,
+            content:
+              INTERVIEWER_SYSTEM_PROMPT_V8,
           },
           {
             role: "system",
-            content: `
-현재 세션 상태:
-${JSON.stringify(sessionState)}
-
-세션 상태를 참고해:
-- 같은 기억 축을 이어가되 무리하게 해석하지 말 것
-- depthLevel, riskLevel, action을 실제로 업데이트할 것
-- 추천 질문 3개를 함께 생성할 것
-- 추천 질문은 진행자 협업 패널에서 사용할 수 있게 각기 다른 방향으로 만들 것
-`,
+            content: OUTPUT_FORMAT_OVERRIDE,
+          },
+          {
+            role: "system",
+            content: `현재 sessionState (외부 엔진이 계산. 읽기만 하고 갱신하지 마라):\n${JSON.stringify(sessionState)}`,
           },
 
           ...messages,
