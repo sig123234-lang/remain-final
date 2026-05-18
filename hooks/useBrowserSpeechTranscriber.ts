@@ -111,9 +111,52 @@ export function useBrowserSpeechTranscriber() {
       };
 
       recognition.onerror = (event) => {
-        options.onError?.(
-          event.message || event.error
-        );
+        // 사용자가 명시적으로 stopListening() 호출하면 브라우저가 자동으로
+        // onerror = "aborted" 를 발동시킨다. 정상 흐름이라 화면에 노출하지 않는다.
+        if (manualStopRef.current) {
+          return;
+        }
+
+        const errorCode = event.error || "";
+
+        // 시스템 사유로 인식이 중단된 경우 (다른 앱이 마이크 점유, 백그라운드 전환 등).
+        // 사용자에게 "aborted" 라는 영어 원문을 노출하지 말고 silently 무시한다.
+        if (errorCode === "aborted") {
+          return;
+        }
+
+        // 알려진 에러 코드를 사람이 이해할 수 있는 한국어 안내로 변환.
+        let friendly = event.message || "";
+        if (errorCode === "no-speech") {
+          friendly =
+            "잘 안 들렸어요. 다시 한 번 말씀해 주시겠어요?";
+        } else if (
+          errorCode === "audio-capture"
+        ) {
+          friendly =
+            "마이크에 접근하지 못했어요. 권한을 확인해 주세요.";
+        } else if (
+          errorCode === "not-allowed" ||
+          errorCode === "service-not-allowed"
+        ) {
+          friendly =
+            "마이크 사용 권한이 필요해요. 브라우저 설정에서 허용해 주세요.";
+        } else if (
+          errorCode === "language-not-supported"
+        ) {
+          friendly =
+            "이 기기에서는 한국어 음성 인식이 지원되지 않아요.";
+        } else if (errorCode === "network") {
+          friendly =
+            "인터넷 연결이 불안정해서 음성 인식을 못 했어요.";
+        }
+
+        if (!friendly) {
+          friendly =
+            "음성 인식 중 문제가 생겼어요. 다시 시도해 주세요.";
+        }
+
+        options.onError?.(friendly);
       };
 
       recognition.onend = () => {

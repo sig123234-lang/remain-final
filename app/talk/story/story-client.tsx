@@ -159,11 +159,14 @@ export default function StoryClientPage({
         advanceToListening();
       };
 
+      const showSilentTtsHint = () => {
+        setBrowserError(
+          "이 기기에서 음성이 안 들리는 것 같아요. 화면의 글을 보고 편하게 말씀해 주세요."
+        );
+      };
+
       utterance.onstart = () => {
         onstartFired = true;
-        // fallback 타이머가 이미 listening 으로 advance 한 뒤 TTS 가 뒤늦게
-        // 실제로 재생되기 시작하는 경우, status 를 speaking 으로 되돌리지 않는다.
-        // 어색한 깜빡임 방지 (listening → speaking → listening).
         if (advanced) return;
         setStatus("speaking");
       };
@@ -173,18 +176,19 @@ export default function StoryClientPage({
       };
 
       utterance.onerror = () => {
+        // TTS 가 자체 에러로 실패 → 어르신이 왜 안 들리는지 알 수 있게 안내.
+        if (!advanced) showSilentTtsHint();
         advanceOnce();
       };
 
-      // ⚠️ 핵심 fallback. Samsung 태블릿처럼 한국어 TTS voice 가 없거나
-      // 시스템 TTS 엔진이 막혀 있으면 utterance.onstart 가 영원히 안 뜬다.
-      // 이때 UI 가 "생각하고 있어요" 에 멈춰 사용자는 답조차 못 한다.
-      // 2.5초 안에 onstart 가 안 뜨면 TTS 가 죽었다고 판단하고 즉시
-      // listening 으로 진입해서 어르신이 화면을 보고 답할 수 있게 한다.
+      // ⚠️ 핵심 fallback. Samsung 태블릿처럼 한국어 TTS voice 가 없으면
+      // onstart 가 영원히 안 뜬다. 2.5초 안에 안 뜨면 silent fail 로 판단.
       window.setTimeout(() => {
-        if (!onstartFired) {
-          advanceOnce();
+        if (onstartFired || advanced) {
+          return;
         }
+        showSilentTtsHint();
+        advanceOnce();
       }, 2500);
 
       // 발화가 너무 길거나 엔진이 onend 를 안 보내는 경우 안전망. 한국어
@@ -225,6 +229,8 @@ export default function StoryClientPage({
         return;
       }
 
+      // 새 답변을 처리 시작하면 이전 안내(아직 화면에 남아있을 수 있는)는 지운다.
+      setBrowserError(null);
       isProcessingTurnRef.current = true;
       setStatus("thinking");
 
@@ -285,9 +291,10 @@ export default function StoryClientPage({
 
     // 모바일 TTS 활성화: 모든 분기 앞에 동기 prime.
     primeSpeechSynthesis();
+    // 새 액션 시작 시 이전에 떠 있던 안내/에러는 정리한다.
+    setBrowserError(null);
 
     if (!sessionId) {
-      setBrowserError(null);
       setStatus("thinking");
 
       speak(currentQuestion);
