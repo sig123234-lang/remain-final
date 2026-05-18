@@ -5,12 +5,12 @@ const openai = new OpenAI({
 });
 
 // 어르신 preferences (talk preferences) 의 voice 옵션 → OpenAI TTS voice 매핑.
-// OpenAI voices: alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer
-// - shimmer: 가장 밝고 경쾌한 여성 톤 (요양 어르신 환영하는 분위기에 적합)
-// - coral: 따뜻하면서 친근한 여성 톤 (백업 옵션)
-// - sage: 차분하지만 또렷한 남성 톤
+// 한국어 자연도 우선 (외국인 액센트 최소):
+// - coral: 따뜻하면서도 또렷한 여성 톤. 한국어 받침/어말 처리가 다른 voice 대비 가장 자연스러움.
+// - sage: 차분한 남성 톤. 한국어 운율 정확도 높음.
+// (shimmer/nova 는 음색은 밝지만 한국어 발음에 외국인 액센트가 더 두드러져 제외)
 const VOICE_MAP: Record<string, string> = {
-  "warm-female": "shimmer",
+  "warm-female": "coral",
   "calm-male": "sage",
 };
 
@@ -81,7 +81,10 @@ export async function POST(req: Request) {
 
   try {
     const speech = await openai.audio.speech.create({
-      model: "tts-1",
+      // tts-1 → tts-1-hd: 한국어 발음/억양 정확도가 눈에 띄게 올라간다.
+      // 응답 시간이 1~2초 더 걸리지만 어르신이 "외국인이 한국말 하는 것 같다" 라고
+      // 느끼지 않게 하려면 hd 가 필요.
+      model: "tts-1-hd",
       // OpenAI SDK 의 voice 타입이 좁게 정의돼 있어 명시 cast.
       voice: openaiVoice as
         | "alloy"

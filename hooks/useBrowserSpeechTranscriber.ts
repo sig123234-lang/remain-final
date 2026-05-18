@@ -35,12 +35,9 @@ export function useBrowserSpeechTranscriber() {
   }, []);
 
   const startListening = useCallback(
-    // 내부 재귀 호출을 위해 named function expression. preserveTranscript=true
-    // 는 자동 재시작 시에만 외부에서는 안 쓰는 옵션.
-    function start(
-      options: StartListeningOptions = {},
-      preserveTranscript = false
-    ): boolean {
+    (
+      options: StartListeningOptions = {}
+    ): boolean => {
       if (typeof window === "undefined") {
         return false;
       }
@@ -56,8 +53,7 @@ export function useBrowserSpeechTranscriber() {
         return false;
       }
 
-      // 이전 인스턴스 정리. ref 를 먼저 비우는 이유: 그 인스턴스의 onend 가
-      // 자동 재시작 분기로 들어가지 않게 (`ref !== recognition` 으로 판정).
+      // 이전 인스턴스 정리.
       const previous = recognitionRef.current;
       recognitionRef.current = null;
       if (previous) {
@@ -68,9 +64,7 @@ export function useBrowserSpeechTranscriber() {
         }
       }
 
-      if (!preserveTranscript) {
-        resetTranscript();
-      }
+      resetTranscript();
       manualStopRef.current = false;
 
       const recognition = new recognitionCtor();
@@ -83,10 +77,19 @@ export function useBrowserSpeechTranscriber() {
       recognition.continuous = true;
 
       recognition.onresult = (event) => {
-        let interimTranscript = "";
+        // 이전 코드는 event.resultIndex 부터 처리하면서 += 로 누적했다.
+        // 일부 모바일 브라우저(Samsung Chrome 등)에서 event.resultIndex 가
+        // 매번 0 으로 들어오거나 같은 final segment 가 다시 emit 돼서,
+        // "나 → 나 나 → 나 나 나 ..." 처럼 같은 발화가 누적 반복되는 증상이 났다.
+        //
+        // event.results 는 항상 현재 시점의 전체 결과 누적이므로, 매 onresult 마다
+        // results 전체를 훑어 final 들을 새로 모은다(= 로 덮어쓰기). 이러면 같은
+        // index 의 결과가 다시 emit 돼도 중복 추가되지 않는다.
+        let finalText = "";
+        let interimText = "";
 
         for (
-          let index = event.resultIndex;
+          let index = 0;
           index < event.results.length;
           index += 1
         ) {
@@ -95,15 +98,15 @@ export function useBrowserSpeechTranscriber() {
             result[0]?.transcript ?? "";
 
           if (result.isFinal) {
-            finalTranscriptRef.current += `${segment} `;
+            finalText += `${segment} `;
           } else {
-            interimTranscript += segment;
+            interimText += segment;
           }
         }
 
+        finalTranscriptRef.current = finalText;
         const combined = (
-          finalTranscriptRef.current +
-          interimTranscript
+          finalText + interimText
         ).trim();
 
         latestCombinedTranscriptRef.current =
@@ -174,23 +177,18 @@ export function useBrowserSpeechTranscriber() {
       };
 
       recognition.onend = () => {
-        // 명시적 stop 이면 그대로 종료.
-        if (manualStopRef.current) {
-          return;
-        }
-        // 이미 다른 startListening 이 진행돼서 ref 가 바뀌었다면 skip.
+        // 이전 버전은 자동 재시작 (preserveTranscript=true) 으로 침묵 끊김 방지를
+        // 시도했지만, 모바일 STT 가 자동 재시작 후 이전 컨텍스트를 다시 emit 하면서
+        // "나 → 나 나 → 나 나 나 ..." 누적 반복 증상의 직접 원인이 됐다.
+        //
+        // continuous=true 한 인스턴스로 충분히 길게 듣는다(모바일 OS 가 강제 종료하기
+        // 전까지). OS 가 끊으면 그동안 받은 transcript 그대로 보존되므로 어르신이
+        // 정지 버튼을 누르면 정상 전송된다. 자동 재시작은 안 한다.
         if (
-          recognitionRef.current !== recognition
+          recognitionRef.current === recognition
         ) {
-          return;
+          recognitionRef.current = null;
         }
-        // continuous=true 라도 모바일/일부 브라우저는 시스템 사유로 인식을 끊는다.
-        // 어르신이 정지 버튼을 누르지 않는 한 마이크가 자동으로 닫히지 않도록
-        // 새 인스턴스로 즉시 재시작한다. transcript 누적은 보존.
-        window.setTimeout(() => {
-          if (manualStopRef.current) return;
-          start(options, true);
-        }, 0);
       };
 
       recognitionRef.current = recognition;
