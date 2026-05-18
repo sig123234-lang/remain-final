@@ -81,10 +81,10 @@ export async function POST(req: Request) {
 
   try {
     const speech = await openai.audio.speech.create({
-      // tts-1 → tts-1-hd: 한국어 발음/억양 정확도가 눈에 띄게 올라간다.
-      // 응답 시간이 1~2초 더 걸리지만 어르신이 "외국인이 한국말 하는 것 같다" 라고
-      // 느끼지 않게 하려면 hd 가 필요.
-      model: "tts-1-hd",
+      // tts-1-hd 가 음질은 더 좋지만 매 턴 1.5~2초 더 걸려서 전체 응답이 너무 늦어졌다.
+      // 어르신 사용성 우선으로 tts-1 로 되돌림. 한국어 자연도는 voice 매핑(coral/sage)
+      // 으로 충분히 보완.
+      model: "tts-1",
       // OpenAI SDK 의 voice 타입이 좁게 정의돼 있어 명시 cast.
       voice: openaiVoice as
         | "alloy"

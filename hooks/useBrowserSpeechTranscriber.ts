@@ -77,15 +77,16 @@ export function useBrowserSpeechTranscriber() {
       recognition.continuous = true;
 
       recognition.onresult = (event) => {
-        // 이전 코드는 event.resultIndex 부터 처리하면서 += 로 누적했다.
-        // 일부 모바일 브라우저(Samsung Chrome 등)에서 event.resultIndex 가
-        // 매번 0 으로 들어오거나 같은 final segment 가 다시 emit 돼서,
-        // "나 → 나 나 → 나 나 나 ..." 처럼 같은 발화가 누적 반복되는 증상이 났다.
-        //
-        // event.results 는 항상 현재 시점의 전체 결과 누적이므로, 매 onresult 마다
-        // results 전체를 훑어 final 들을 새로 모은다(= 로 덮어쓰기). 이러면 같은
-        // index 의 결과가 다시 emit 돼도 중복 추가되지 않는다.
-        let finalText = "";
+        // 모바일 STT (Samsung Chrome 등) 는 같은 발화에서도 여러 result 가
+        // isFinal=true 로 들어오는데, 각 transcript 가 "직전 텍스트 + 이번 단어"
+        // 처럼 누적 prefix 형태로 도착한다.
+        //   results[0]: "스팸이"
+        //   results[1]: "스팸이 존나"
+        //   results[2]: "스팸이 존나 많이"
+        // 이걸 단순히 += 로 합치면 "스팸이 스팸이 존나 스팸이 존나 많이" 처럼
+        // 같은 발화가 중복 누적된다. 그래서 prefix-dedup 으로 정리한다:
+        // 어떤 final 의 트림 텍스트가 다른 더 긴 final 의 prefix 면 그 짧은 건 버린다.
+        const finalSegments: string[] = [];
         let interimText = "";
 
         for (
@@ -94,19 +95,39 @@ export function useBrowserSpeechTranscriber() {
           index += 1
         ) {
           const result = event.results[index];
-          const segment =
-            result[0]?.transcript ?? "";
+          const segment = (
+            result[0]?.transcript ?? ""
+          ).trim();
+
+          if (!segment) {
+            continue;
+          }
 
           if (result.isFinal) {
-            finalText += `${segment} `;
+            finalSegments.push(segment);
           } else {
             interimText += segment;
           }
         }
 
+        // prefix-dedup: 다른 더 긴 segment 의 시작 부분이면 제거.
+        // 이러면 누적 prefix 형태로 들어와도 가장 완전한 한 줄만 남는다.
+        const deduped = finalSegments.filter(
+          (text, idx) =>
+            !finalSegments.some(
+              (other, j) =>
+                j !== idx &&
+                other.length > text.length &&
+                other.startsWith(text)
+            )
+        );
+        const finalText = deduped.join(" ").trim();
+
         finalTranscriptRef.current = finalText;
         const combined = (
-          finalText + interimText
+          finalText +
+          (finalText && interimText ? " " : "") +
+          interimText
         ).trim();
 
         latestCombinedTranscriptRef.current =
