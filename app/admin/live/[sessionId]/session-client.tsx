@@ -198,20 +198,50 @@ export default function AdminLiveSessionClient({
     [eldersById, snapshot]
   );
 
-  const sortedRecommendations =
-    snapshot?.recommendations
-      .filter(
+  const sortedRecommendations = useMemo(() => {
+    const suggested =
+      snapshot?.recommendations.filter(
         (recommendation) =>
-          recommendation.status ===
-          "suggested"
-      )
-      .sort((left, right) => {
-        const leftRank =
-          left.rank ?? 999;
-        const rightRank =
-          right.rank ?? 999;
-        return leftRank - rightRank;
-      }) ?? [];
+          recommendation.status === "suggested"
+      ) ?? [];
+
+    if (suggested.length === 0) return [];
+
+    // 매 턴마다 AI 가 새로운 추천 3개를 만든다. 이전 턴의 추천이 같이 누적
+    // 표시되면 진행자가 어떤 게 최신인지 헷갈리니까, 가장 최근에 만들어진
+    // 묶음 (= 동일한 based_on_message_id, 또는 같은 turn 의 created_at) 만 노출한다.
+    const byTimeDesc = [...suggested].sort(
+      (left, right) =>
+        (right.created_at || "").localeCompare(
+          left.created_at || ""
+        )
+    );
+    const latestMessageId =
+      byTimeDesc[0].based_on_message_id;
+
+    const latestBucket = latestMessageId
+      ? byTimeDesc.filter(
+          (recommendation) =>
+            recommendation.based_on_message_id ===
+            latestMessageId
+        )
+      : // based_on_message_id 가 없는 옛 데이터 — 같은 created_at 1초 윈도우로 묶음
+        byTimeDesc.filter((recommendation) => {
+          const head = new Date(
+            byTimeDesc[0].created_at || 0
+          ).getTime();
+          const cur = new Date(
+            recommendation.created_at || 0
+          ).getTime();
+          return Math.abs(head - cur) <= 1000;
+        });
+
+    return latestBucket.sort(
+      (left, right) =>
+        (left.rank ?? 999) -
+        (right.rank ?? 999)
+    );
+  }, [snapshot?.recommendations]);
 
   const latestCommand =
     snapshot?.commands[0] ?? null;
