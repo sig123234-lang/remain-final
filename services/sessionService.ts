@@ -281,6 +281,35 @@ export async function getRecentSessions(
   });
 }
 
+/**
+ * 이 어르신의 가장 최근 ended 세션 1개 + summary + 마지막 assistant 메시지.
+ * 새 세션의 오프닝 질문을 만들 때 사용한다.
+ */
+export async function getLastEndedSession(
+  elderId: string
+) {
+  return dbRead<{
+    session: SessionRecord & {
+      summary?: string | null;
+      session_summaries?:
+        | {
+            summary?: string | null;
+            family_friendly_summary?:
+              | string
+              | null;
+          }[]
+        | null;
+    };
+    lastAssistantMessage: {
+      content: string;
+      created_at: string;
+    } | null;
+  } | null>({
+    op: "getLastEndedSession",
+    elderId,
+  });
+}
+
 export async function endSession(
   sessionId: string,
   summary?: string,

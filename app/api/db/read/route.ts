@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   dbGetElder,
   dbGetElderSessions,
+  dbGetLastEndedSession,
   dbGetRecentSessions,
   dbGetSession,
   dbGetSessionCommands,
@@ -33,7 +34,8 @@ type DbReadBody =
   | { op: "getSessionCommands"; sessionId: string }
   | { op: "getSessionSummary"; sessionId: string }
   | { op: "getElderSessions"; elderId: string }
-  | { op: "getRecentSessions"; elderId: string };
+  | { op: "getRecentSessions"; elderId: string }
+  | { op: "getLastEndedSession"; elderId: string };
 
 function serializeError(error: unknown) {
   if (
@@ -172,6 +174,13 @@ export async function POST(request: Request) {
       case "getRecentSessions":
         return NextResponse.json({
           data: await dbGetRecentSessions(
+            supabase,
+            body.elderId
+          ),
+        });
+      case "getLastEndedSession":
+        return NextResponse.json({
+          data: await dbGetLastEndedSession(
             supabase,
             body.elderId
           ),

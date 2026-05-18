@@ -10,6 +10,7 @@ import {
 
 import {
   ACTIVE_SESSION_STORAGE_KEY,
+  buildReturningOpening,
   REMAIN_DEFAULT_ELDER_ID,
   REMAIN_FIRST_QUESTION,
 } from "@/lib/remain-config";
@@ -19,6 +20,7 @@ import {
   createSession,
   createSessionRecommendations,
   endSession,
+  getLastEndedSession,
   getSessionSnapshot,
   saveSessionSummary,
   updateCommandStatus,
@@ -61,9 +63,14 @@ export function useSessionRuntime({
   const [recommendations, setRecommendations] =
     useState<SessionRecommendationRecord[]>([]);
   const [currentState, setCurrentState] =
-    useState<SessionRuntimeState>(
-      createInitialRuntimeState(firstQuestion)
-    );
+    useState<SessionRuntimeState>(() => ({
+      // currentQuestion 을 일부러 빈 문자열로 시작한다. 그러면 아래의
+      // `currentState.currentQuestion || effectiveFirstQuestion` 폴백 덕에,
+      // 마운트 후 비동기로 setReturningOpening 이 들어오면 UI 가 자동으로
+      // "지난번엔 ... 이야기를 나누셨지요. 오늘은 ..." 로 갱신된다.
+      ...createInitialRuntimeState(firstQuestion),
+      currentQuestion: "",
+    }));
   const [isLoading, setIsLoading] =
     useState(autoInitialize);
   const [isEndingSession, setIsEndingSession] =
@@ -80,8 +87,17 @@ export function useSessionRuntime({
     elderId ?? REMAIN_DEFAULT_ELDER_ID;
   const sessionStorageKey = `${ACTIVE_SESSION_STORAGE_KEY}:${effectiveElderId}`;
 
+  // 이전 ended 세션의 summary 로부터 만들어진 오프닝. 없으면 firstQuestion (기본).
+  // 페이지 마운트 시 비동기로 fetch 해서 set. 사용자가 voice button 탭하기 전에
+  // 보통 도착해서 첫 발화가 이걸 사용한다.
+  const [returningOpening, setReturningOpening] =
+    useState<string | null>(null);
+  const effectiveFirstQuestion =
+    returningOpening || firstQuestion;
+
   const currentQuestion =
-    currentState.currentQuestion || firstQuestion;
+    currentState.currentQuestion ||
+    effectiveFirstQuestion;
 
   const applyRealtimeMessage = useCallback(
     (nextMessage: SessionMessageRecord) => {
@@ -388,8 +404,12 @@ export function useSessionRuntime({
         }
       }
 
+      // 이전 ended 세션 summary 가 있으면 그걸 기반으로 한 오프닝 사용.
+      // mount 시 setReturningOpening 으로 미리 가져옴. 못 가져온 경우엔 기본 질문.
+      const openingText =
+        returningOpening || firstQuestion;
       const initialState =
-        createInitialRuntimeState(firstQuestion);
+        createInitialRuntimeState(openingText);
 
       const session = await createSession({
         elderId: effectiveElderId,
@@ -401,7 +421,7 @@ export function useSessionRuntime({
         sessionId: session.id,
         elderId: effectiveElderId,
         role: "assistant",
-        content: firstQuestion,
+        content: openingText,
         source: "ai",
         turnIndex: 0,
         sequenceInTurn: 0,
@@ -437,6 +457,7 @@ export function useSessionRuntime({
     effectiveElderId,
     facilityId,
     firstQuestion,
+    returningOpening,
     sessionStorageKey,
   ]);
 
@@ -453,6 +474,41 @@ export function useSessionRuntime({
       window.clearTimeout(timeoutId);
     };
   }, [autoInitialize, initializeSession]);
+
+  // Mount 시 이전 ended 세션을 가져와서 다음 세션의 첫 질문에 반영.
+  // 어르신이 voice button 을 탭하기 전에 보통 완료된다.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const last = await getLastEndedSession(
+          effectiveElderId
+        );
+        if (cancelled || !last) return;
+        // 빈 문자열인 summary 도 의미 없으므로 || 로 폴백을 더 적극적으로.
+        const summaryCandidate =
+          last.session?.summary ||
+          last.session?.session_summaries?.[0]
+            ?.family_friendly_summary ||
+          last.session?.session_summaries?.[0]
+            ?.summary ||
+          null;
+        const opening = buildReturningOpening(
+          summaryCandidate,
+          firstQuestion
+        );
+        if (opening !== firstQuestion) {
+          setReturningOpening(opening);
+        }
+      } catch {
+        /* 못 가져오면 기본 firstQuestion 사용 — 무시 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveElderId, firstQuestion]);
+
 
   useEffect(() => {
     if (!sessionId) {

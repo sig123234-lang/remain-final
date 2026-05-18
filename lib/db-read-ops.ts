@@ -248,3 +248,57 @@ export async function dbGetRecentSessions(
 
   return data;
 }
+
+/**
+ * 어르신의 가장 최근 종료된(ended) 세션 1개. session_summaries 와 마지막
+ * assistant message 까지 같이 가져와서 다음 세션의 첫 질문을 만든다.
+ *
+ * 종료된 세션이 없으면 null.
+ */
+export async function dbGetLastEndedSession(
+  client: SupabaseClient,
+  elderId: string
+) {
+  const { data: session, error } = await client
+    .from("sessions")
+    .select(
+      `${SESSION_SELECT}, session_summaries (*)`
+    )
+    .eq("elder_id", elderId)
+    .eq("status", "ended")
+    .order("ended_at", {
+      ascending: false,
+      nullsFirst: false,
+    })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!session) {
+    return null;
+  }
+
+  // 마지막 assistant 메시지 (보통 마무리 인사 직전의 질문). 1개만.
+  const { data: lastAssistantRows } =
+    await client
+      .from("messages")
+      .select("content, created_at, metadata")
+      .eq(
+        "session_id",
+        (session as { id: string }).id
+      )
+      .eq("role", "assistant")
+      .order("created_at", {
+        ascending: false,
+      })
+      .limit(1);
+
+  return {
+    session,
+    lastAssistantMessage:
+      (lastAssistantRows ?? [])[0] ?? null,
+  };
+}
