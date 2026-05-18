@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   useDeferredValue,
   useEffect,
@@ -260,8 +261,14 @@ export default function AdminReportsPage() {
               return (
                 <article
                   key={session.id}
-                  className="rounded-[28px] bg-white p-6 shadow-sm"
+                  className="rounded-[28px] bg-white p-6 shadow-sm transition hover:shadow-md"
                 >
+                  <Link
+                    href={`/admin/reports/${session.id}`}
+                    className="mb-3 inline-flex items-center gap-1 rounded-full bg-[#edf4ec] px-3 py-1.5 text-xs font-bold text-[#5f7b62] hover:brightness-105"
+                  >
+                    상세 리포트 + 전체 대화 보기 →
+                  </Link>
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div>
                       <p className="text-sm text-[#8a7463]">
