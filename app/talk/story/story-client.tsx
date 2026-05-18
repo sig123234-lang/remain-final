@@ -82,10 +82,13 @@ export default function StoryClientPage({
       return;
     }
 
+    // volume=0 으로 두면 Samsung 태블릿의 Android Chrome 이 utterance 를
+    // silently drop 하면서 큐 자체를 잠가버려, 뒤에 큐잉되는 진짜 발화도 무음.
+    // 0.01 = 사실상 안 들리지만 audio pipeline 은 정상 동작.
     const primer = new SpeechSynthesisUtterance(
-      " "
+      "."
     );
-    primer.volume = 0;
+    primer.volume = 0.01;
     primer.rate = 1;
     primer.lang = "ko-KR";
     try {
@@ -131,42 +134,69 @@ export default function StoryClientPage({
         utterance.voice = preferredVoice;
       }
 
+      const advanceToListening = () => {
+        setStatus("listening");
+        startListening({
+          onError: (message) => {
+            setBrowserError(message);
+            setStatus("waiting");
+          },
+          onAutoStop: (finalText) => {
+            void handleFinalTranscriptRef.current(
+              finalText
+            );
+          },
+        });
+      };
+
+      // 한 발화에 대해 listening 으로의 진입이 두 번 일어나지 않게 가드.
+      // (onend + onstart-timeout 둘 다 발동될 수 있음)
+      let advanced = false;
+      let onstartFired = false;
+      const advanceOnce = () => {
+        if (advanced) return;
+        advanced = true;
+        advanceToListening();
+      };
+
       utterance.onstart = () => {
+        onstartFired = true;
+        // fallback 타이머가 이미 listening 으로 advance 한 뒤 TTS 가 뒤늦게
+        // 실제로 재생되기 시작하는 경우, status 를 speaking 으로 되돌리지 않는다.
+        // 어색한 깜빡임 방지 (listening → speaking → listening).
+        if (advanced) return;
         setStatus("speaking");
       };
 
       utterance.onend = () => {
-        setStatus("listening");
-
-        startListening({
-          onError: (message) => {
-            setBrowserError(message);
-            setStatus("waiting");
-          },
-          onAutoStop: (finalText) => {
-            void handleFinalTranscriptRef.current(
-              finalText
-            );
-          },
-        });
+        advanceOnce();
       };
 
       utterance.onerror = () => {
-        setStatus("listening");
-        startListening({
-          onError: (message) => {
-            setBrowserError(message);
-            setStatus("waiting");
-          },
-          onAutoStop: (finalText) => {
-            void handleFinalTranscriptRef.current(
-              finalText
-            );
-          },
-        });
+        advanceOnce();
       };
 
-      window.speechSynthesis.speak(utterance);
+      // ⚠️ 핵심 fallback. Samsung 태블릿처럼 한국어 TTS voice 가 없거나
+      // 시스템 TTS 엔진이 막혀 있으면 utterance.onstart 가 영원히 안 뜬다.
+      // 이때 UI 가 "생각하고 있어요" 에 멈춰 사용자는 답조차 못 한다.
+      // 2.5초 안에 onstart 가 안 뜨면 TTS 가 죽었다고 판단하고 즉시
+      // listening 으로 진입해서 어르신이 화면을 보고 답할 수 있게 한다.
+      window.setTimeout(() => {
+        if (!onstartFired) {
+          advanceOnce();
+        }
+      }, 2500);
+
+      // 발화가 너무 길거나 엔진이 onend 를 안 보내는 경우 안전망. 한국어
+      // 80자 문장이 가장 느린 rate 로도 ~15초 안에 끝나므로 30초면 충분.
+      window.setTimeout(advanceOnce, 30_000);
+
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        // 일부 모바일 브라우저에서 speak() 가 throw. 그 즉시 listening 으로.
+        advanceOnce();
+      }
     },
     [
       preferences.speechRate,
@@ -348,6 +378,17 @@ export default function StoryClientPage({
   };
 
   useEffect(() => {
+    // 일부 브라우저(Samsung Internet, 일부 Android Chrome)는 첫 getVoices() 가
+    // 빈 배열을 반환하고 voiceschanged 이벤트 후에야 채워진다. 마운트 즉시
+    // 호출해서 비동기 로딩을 시작해 두면, 사용자가 음성 버튼을 탭할 때쯤
+    // 한국어 voice 가 준비돼 있을 가능성이 높아진다.
+    if (
+      typeof window !== "undefined" &&
+      "speechSynthesis" in window
+    ) {
+      window.speechSynthesis.getVoices();
+    }
+
     return () => {
       if (typeof window !== "undefined") {
         window.speechSynthesis.cancel();
