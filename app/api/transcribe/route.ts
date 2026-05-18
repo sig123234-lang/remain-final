@@ -15,6 +15,38 @@ const openai = new OpenAI({
  *
  * 너무 길면 효과가 흐려지므로 ~500자 안에서 자주 등장하는 단어만 나열.
  */
+/**
+ * Whisper 가 가끔 마침표를 빠뜨리거나 문장을 길게 이어붙인다. 한국어 어말 어미
+ * (~다 / ~요 / ~네 / ~잖아 / ~죠 등) 뒤에 다음 단어가 이어지면 마침표 + 띄어쓰기를
+ * 삽입하고, 전체 텍스트 끝에도 종결 부호가 없으면 마침표를 붙인다.
+ *
+ * 너무 공격적이면 정상 표현 ("이리 와요 ~" 같은) 을 망가뜨리니, 종결어미 패턴 한정.
+ */
+function ensureSentencePunctuation(
+  text: string
+): string {
+  if (!text) return text;
+  let result = text.trim();
+  // 1. 종결어미 + 공백 + 한글 시작 패턴 → 마침표 삽입
+  //    "먹었어요 어머니가" → "먹었어요. 어머니가"
+  //    "그랬지요 정말로" → "그랬지요. 정말로"
+  result = result.replace(
+    /([가-힣]*(?:다|요|네|죠|어|아|잖아|거든|구나|는데|걸요|는걸|군요|는군요))\s+(?=[가-힣])/g,
+    "$1. "
+  );
+  // 2. 마침표/물음표/느낌표 중복 정리
+  result = result.replace(
+    /([.!?]){2,}/g,
+    "$1"
+  );
+  result = result.replace(/\s+/g, " ").trim();
+  // 3. 전체 끝에 종결 부호 없으면 마침표 추가
+  if (!/[.!?。？！…]$/.test(result)) {
+    result += ".";
+  }
+  return result;
+}
+
 const WHISPER_KO_PROMPT = [
   "한국 노인의 회상 인터뷰 음성입니다.",
   "발음이 부정확하거나 사투리(경상도, 전라도, 충청도, 강원도)가 섞일 수 있고, 가끔 말을 더듬으십니다.",
@@ -90,8 +122,13 @@ export async function POST(req: Request) {
     const text = (
       transcription.text || ""
     ).trim();
+    // 어르신 발화에 마침표를 자동으로 정리. LLM 이 문장 단위로 정확히 이해하게 해서
+    // v8 의 사람파기/시점명시/꼬리 질문이 더 안정적으로 동작한다.
+    const cleaned = ensureSentencePunctuation(
+      text
+    );
     return NextResponse.json({
-      data: { text },
+      data: { text: cleaned },
     });
   } catch (error) {
     const message =

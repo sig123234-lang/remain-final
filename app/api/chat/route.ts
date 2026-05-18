@@ -21,6 +21,13 @@ const OUTPUT_FORMAT_OVERRIDE = `
 위 "출력 형식" 섹션은 무시하고 반드시 아래 JSON 객체 하나만 출력한다.
 필드 이름·타입을 절대 바꾸지 마라. recommendations 는 3개 채운다.
 
+⚠️ 절대 규칙 (이 규칙들을 어기면 출력 무효):
+- speech 와 tts_text 는 반드시 물음표(?) 로 끝나야 한다. 평서문으로 끝나면 안 된다.
+- 인정(되비침)만 하고 질문을 빠뜨리면 안 된다. 인정 + 꼬리 질문 = 한 묶음.
+- 느낌표(!) 사용 금지. 차분한 말투를 위해 강조는 마침표(.) 로 끝낸다.
+- 어르신을 흥분시키는 과한 감탄("정말요?", "와!", "대단해요!") 금지.
+- 한 응답에 질문은 정확히 한 개. 두 개 이상의 ? 는 금지.
+
 {
   "speech": "어르신에게 말할 실제 문장 (반드시 꼬리 포함)",
   "tts_text": "TTS 최적화 문장",
@@ -211,14 +218,41 @@ export async function POST(req: Request) {
     const parsed =
       JSON.parse(raw) as Partial<ChatCompletionPayload>;
 
+    /**
+     * speech 는 반드시 질문(?)으로 끝나야 한다는 절대 규칙을 코드 레벨에서 한 번 더 강제.
+     * - 끝의 마침표/느낌표/말줄임은 ? 로 치환
+     * - 그래도 ? 로 안 끝나면 "어떠셨어요?" 자연 꼬리 추가
+     * - 본문의 ! 는 모두 . 로 치환 (차분한 톤)
+     */
+    const enforceQuestionEnding = (
+      text: string | undefined
+    ): string => {
+      let cleaned = (text || "").trim();
+      if (!cleaned) {
+        return "조금 더 이야기 들려주시겠어요?";
+      }
+      // 본문의 강조 ! 는 모두 . 로
+      cleaned = cleaned.replace(/[!‼❗❕]/g, ".");
+      // 중복 마침표 정리
+      cleaned = cleaned.replace(/\.{2,}/g, ".");
+      // 끝의 마침표/말줄임을 정리
+      cleaned = cleaned.replace(/[.\s]+$/u, "");
+      if (!/[?？]$/.test(cleaned)) {
+        cleaned += ". 어떠셨어요?";
+      }
+      return cleaned.trim();
+    };
+
+    const finalSpeech = enforceQuestionEnding(
+      parsed.speech
+    );
+    const finalTtsText = enforceQuestionEnding(
+      parsed.tts_text || parsed.speech
+    );
+
     const normalized: ChatCompletionPayload = {
-      speech:
-        parsed.speech ||
-        "이야기를 조금 더 들려주세요.",
-      tts_text:
-        parsed.tts_text ||
-        parsed.speech ||
-        "이야기를 조금 더 들려주세요.",
+      speech: finalSpeech,
+      tts_text: finalTtsText,
       depthLevel:
         parsed.depthLevel || 1,
       emotionDetected:

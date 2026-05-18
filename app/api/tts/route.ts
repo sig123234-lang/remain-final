@@ -97,9 +97,16 @@ export async function POST(req: Request) {
         | "nova"
         | "sage"
         | "shimmer",
-      input: text,
+      // 차분한 톤을 위해:
+      // - speed 1.0 → 0.95: 살짝 더 느리게 말함
+      // - 텍스트의 ! / ‼ / !! 같은 느낌표를 마침표로 치환해서 TTS 의 강세/높낮이 변화를 억제
+      // - 줄임표/물결을 마침표로 정리해 갑작스러운 톤 변화 방지
+      input: text
+        .replace(/[!‼❗❕]+/g, ".")
+        .replace(/[~∼〜]+/g, "")
+        .replace(/[\.{2,}…]+/g, "."),
       response_format: "mp3",
-      speed: 1.0,
+      speed: 0.95,
     });
 
     const audioBuffer = Buffer.from(
