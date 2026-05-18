@@ -374,6 +374,12 @@ export default function ReportDetailClient({
           @page { margin: 16mm 14mm; size: A4; }
           body { background: white !important; }
           .report-card { box-shadow: none !important; border: none !important; }
+          /* 배경색이 PDF/인쇄에 그대로 찍히게 한다. 이게 없으면 어르신 답변의
+             초록색 배경이 빠지고 흰 박스 + 글자만 나옴. */
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
         }
       `}</style>
 
@@ -546,16 +552,24 @@ export default function ReportDetailClient({
                       const isElder =
                         message.role ===
                         "user";
+                      // 어르신 답변은 분명한 초록 배경 + 어두운 초록 글자.
+                      // 진행자(이야기 도우미)는 색 없이 흰색 + 얇은 외곽선만.
                       return (
                         <div
                           key={message.id}
-                          className={`break-inside-avoid rounded-2xl px-4 py-3 print:border print:border-[#e6dfd2] ${
+                          className={`break-inside-avoid rounded-2xl px-4 py-3 ${
                             isElder
-                              ? "bg-[#edf4ec] text-[#3f4a37]"
-                              : "bg-[#faf6ef] text-[#3f3a33]"
+                              ? "bg-[#c6e2c2] text-[#2f4a2a] ring-1 ring-[#a8cda3]"
+                              : "bg-white text-[#3f3a33] ring-1 ring-[#e6dfd2]"
                           }`}
                         >
-                          <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wide opacity-70">
+                          <div
+                            className={`flex items-center justify-between text-xs font-bold uppercase tracking-wide ${
+                              isElder
+                                ? "text-[#3f6135]"
+                                : "text-[#8a8273]"
+                            }`}
+                          >
                             <span>
                               {isElder
                                 ? "어르신"

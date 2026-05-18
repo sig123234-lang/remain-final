@@ -12,8 +12,13 @@ export default function AdminLayout({
     children: React.ReactNode;
   }) {
     return (
-      <main className="min-h-screen bg-[#f5f1ea]">
-        <AdminNav />
+      <main className="min-h-screen bg-[#f5f1ea] print:bg-white">
+        {/* 인쇄(PDF) 출력 시 admin 네비게이션은 보이지 않게.
+            상세 리포트 페이지가 인쇄될 때 "운영 홈/실시간 세션/..." 같은
+            관리자용 메뉴가 보호자용 출력물에 박히는 걸 방지한다. */}
+        <div className="print:hidden">
+          <AdminNav />
+        </div>
         {children}
       </main>
     );
