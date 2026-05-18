@@ -415,48 +415,112 @@ export default function AdminLiveSessionClient({
                   const isSelected =
                     session.id === sessionId;
 
+                  // 카드 색상: 위험도 high > 슬픔 > 기쁨 > 진행 중 > 기본
+                  const state =
+                    session.current_state;
+                  const risk =
+                    state?.riskLevel || "low";
+                  const emotion =
+                    state?.emotionDetected ||
+                    "";
+                  const isPaused =
+                    state?.action ===
+                      "stop_and_handoff" ||
+                    (state?.highRiskCount ??
+                      0) >= 3;
+                  const sadKeywords = [
+                    "sad",
+                    "sorrow",
+                    "슬픔",
+                    "걱정",
+                    "안타까움",
+                    "외로움",
+                  ];
+                  const happyKeywords = [
+                    "positive",
+                    "joy",
+                    "happy",
+                    "기쁨",
+                    "기쁨",
+                    "행복",
+                    "즐거움",
+                    "안정감",
+                    "편안",
+                  ];
+                  const cardTone = isPaused
+                    ? "bg-red-500/40 ring-2 ring-red-300"
+                    : risk === "high"
+                      ? "bg-red-500/35 ring-2 ring-red-400"
+                      : sadKeywords.some(
+                            (k) =>
+                              emotion.includes(
+                                k
+                              )
+                          )
+                        ? "bg-orange-500/30 ring-1 ring-orange-300"
+                        : happyKeywords.some(
+                              (k) =>
+                                emotion.includes(
+                                  k
+                                )
+                            )
+                          ? "bg-pink-500/30 ring-1 ring-pink-300"
+                          : "bg-emerald-500/25 ring-1 ring-emerald-300";
+
                   return (
                     <Link
                       key={session.id}
                       href={`/admin/live/${session.id}`}
                       className={`block rounded-2xl px-4 py-3 transition ${
                         isSelected
-                          ? "bg-white/16"
-                          : "bg-white/6 hover:bg-white/10"
-                      }`}
+                          ? "ring-2 ring-white/60 "
+                          : "hover:brightness-110 "
+                      }${cardTone}`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <p className="text-sm font-semibold">
+                          <p className="text-sm font-bold text-white">
                             {elder
                               ?.display_name ||
                               elder
                                 ?.full_name ||
                               "이름 미확인"}
                           </p>
-                          <p className="mt-1 text-[11px] text-white/55">
-                            {session.current_state
-                              ?.action ||
+                          <p className="mt-1 text-[11px] text-white/75">
+                            {state?.action ||
                               "continue"}
                           </p>
                         </div>
 
-                        <span className="rounded-full bg-[#6f9075]/70 px-2 py-1 text-[10px] font-bold">
-                          LIVE
+                        <span
+                          className={`rounded-full px-2 py-1 text-[10px] font-bold ${
+                            isPaused
+                              ? "bg-red-200 text-red-800"
+                              : "bg-white/25 text-white"
+                          }`}
+                        >
+                          {isPaused
+                            ? "일시중단"
+                            : "LIVE"}
                         </span>
                       </div>
 
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-white/72">
-                        <div className="rounded-xl bg-white/6 px-2 py-2">
-                          위험{" "}
-                          {session.current_state
-                            ?.riskLevel ||
-                            "low"}
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-white">
+                        <div className="rounded-xl bg-black/20 px-2 py-2 font-semibold">
+                          위험 {risk}
+                          {(state?.highRiskCount ??
+                            0) > 0 && (
+                            <span className="ml-1 text-white/80">
+                              ({
+                                state?.highRiskCount
+                              }
+                              /3)
+                            </span>
+                          )}
                         </div>
-                        <div className="rounded-xl bg-white/6 px-2 py-2">
+                        <div className="rounded-xl bg-black/20 px-2 py-2 font-semibold">
                           깊이 L
-                          {session.current_state
-                            ?.depthLevel ||
+                          {state?.depthLevel ||
                             1}
                         </div>
                       </div>
@@ -591,6 +655,51 @@ export default function AdminLiveSessionClient({
               </button>
             </div>
           </section>
+
+          {(currentState?.action ===
+            "stop_and_handoff" ||
+            (currentState?.highRiskCount ?? 0) >=
+              3) && (
+            <section className="mb-5 rounded-2xl border-2 border-red-300 bg-red-50 px-5 py-4 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex-1">
+                  <p className="text-base font-black text-red-700">
+                    ⚠️ 위험도 high 누적 — 대화 자동 일시중단
+                  </p>
+                  <p className="mt-1 text-sm text-[#7c4a3f]">
+                    어르신께 위험 신호가 {(
+                      currentState?.highRiskCount ??
+                      0
+                    )}
+                    회 누적되어 시스템이 잠시 대화를 멈췄습니다. 직접 진행을 이어가거나 오늘 이야기를 마무리해 주세요.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void issueCommand(
+                        "resume_after_safety"
+                      );
+                    }}
+                    className="rounded-xl bg-[#6f9075] px-4 py-2 text-sm font-bold text-white shadow-sm hover:brightness-110"
+                  >
+                    대화 계속하기
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleEndSession();
+                    }}
+                    disabled={isEndingSession}
+                    className="rounded-xl bg-[#d96b6b] px-4 py-2 text-sm font-bold text-white shadow-sm hover:brightness-110 disabled:opacity-60"
+                  >
+                    이야기 마무리하기
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
 
           {actionError && (
             <section className="mb-5 rounded-2xl bg-[#fff2ef] px-5 py-4 text-sm text-[#8a5f57] shadow-sm">

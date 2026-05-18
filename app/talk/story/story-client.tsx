@@ -362,8 +362,19 @@ export default function StoryClientPage({
     void handleFinalTranscript(finalTranscript);
   }, [handleFinalTranscript, stopListening]);
 
+  // 위험도 high 가 3회 누적되어 자동 일시중단된 상태인지.
+  const isPausedForSafety =
+    currentState.action === "stop_and_handoff" ||
+    (currentState.highRiskCount ?? 0) >= 3;
+
   const handleVoiceButton = async () => {
     if (isLoading || isEndingSession) {
+      return;
+    }
+
+    // 안전 일시중단 상태에서는 어르신이 voice 버튼을 눌러도 동작하지 않는다.
+    // 진행자가 "대화 계속하기" 결정을 보내야 풀린다.
+    if (isPausedForSafety) {
       return;
     }
 
@@ -494,14 +505,20 @@ export default function StoryClientPage({
   ]);
 
   const lastAnswer = transcript;
+  const safetyHandoffMessage =
+    "잠시 진행자 선생님이 도와드릴 거예요. 편안하게 기다려 주세요.";
   const statusMessage =
-    sessionStatus === "active"
-      ? browserError || error
-      : error ||
-        "진행자가 세션을 종료했어요. 새 세션에서 다시 시작해 주세요.";
-  const headline = hasSession
-    ? currentQuestion
-    : "준비가 되면 아래 버튼을 눌러 이야기를 시작해요.";
+    sessionStatus !== "active"
+      ? error ||
+        "진행자가 세션을 종료했어요. 새 세션에서 다시 시작해 주세요."
+      : isPausedForSafety
+        ? safetyHandoffMessage
+        : browserError || error;
+  const headline = isPausedForSafety
+    ? "오늘 이야기를 잠시 멈췄어요"
+    : hasSession
+      ? currentQuestion
+      : "준비가 되면 아래 버튼을 눌러 이야기를 시작해요.";
   const questionTextClass = getQuestionTextClass(
     preferences.fontSize
   );

@@ -309,6 +309,26 @@ export function useSessionRuntime({
           break;
         }
 
+        case "resume_after_safety": {
+          // 진행자가 위험-자동중단 상태를 해제. 카운터 0 으로 초기화.
+          nextState = {
+            ...currentState,
+            action: "continue",
+            highRiskCount: 0,
+            facilitatorNote:
+              "진행자가 대화 재개를 결정했습니다.",
+            activeCommandId: command.id,
+          };
+          setCurrentState(nextState);
+          if (sessionId) {
+            await updateSessionCurrentState(
+              sessionId,
+              nextState
+            );
+          }
+          break;
+        }
+
         case "end_session": {
           await finalizeSession();
           break;
@@ -653,16 +673,35 @@ export function useSessionRuntime({
 
       applyRealtimeMessage(assistantMessage);
 
+      const aiRisk = data.riskLevel || "low";
+      const previousHighRisk =
+        currentState.highRiskCount ?? 0;
+      const nextHighRiskCount =
+        aiRisk === "high"
+          ? previousHighRisk + 1
+          : previousHighRisk;
+      // 누적 3 도달 시 자동 일시 중단. action 을 stop_and_handoff 로 강제해서
+      // story-client UI 와 admin 패널이 둘 다 알아챌 수 있게 한다.
+      const safetyHandoff =
+        nextHighRiskCount >= 3;
+
       const nextState: SessionRuntimeState = {
         ...currentState,
         turnCount: nextTurnCount,
         depthLevel: data.depthLevel || 1,
         emotionDetected:
           data.emotionDetected || "neutral",
-        riskLevel: data.riskLevel || "low",
-        action: data.action || "continue",
+        riskLevel: aiRisk,
+        highRiskCount: nextHighRiskCount,
+        action: safetyHandoff
+          ? "stop_and_handoff"
+          : data.action || "continue",
         facilitatorNote:
-          data.facilitatorNote || "",
+          safetyHandoff
+            ? `${
+                data.facilitatorNote || ""
+              }${data.facilitatorNote ? " | " : ""}위험도 high 가 ${nextHighRiskCount}회 누적되어 자동 일시중단. 진행자가 계속 진행할지 결정해 주세요.`
+            : data.facilitatorNote || "",
         currentQuestion:
           data.speech ||
           currentState.currentQuestion,

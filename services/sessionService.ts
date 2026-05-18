@@ -115,6 +115,7 @@ export function createInitialRuntimeState(
     activeRecommendationId: null,
     activeCommandId: null,
     lastSpeaker: "assistant",
+    highRiskCount: 0,
   };
 }
 

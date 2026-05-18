@@ -24,12 +24,16 @@ import { REMAIN_DEFAULT_ELDER_ID } from "@/lib/remain-config";
 type Session = {
   id: string;
   started_at: string;
+  ended_at?: string | null;
   summary?: string;
   detected_emotion?: string;
   messages?: {
     id: string;
     role: string;
     content: string;
+    created_at?: string;
+    turn_index?: number;
+    sequence_in_turn?: number;
   }[];
 };
 
@@ -118,19 +122,40 @@ function RecordsPageBody({
 
           <div className="space-y-5">
             {sessions.map((session) => {
-              // 시간순으로 정렬된 전체 메시지를 채팅 형태로 노출.
-              // 이전엔 첫 user 발화 한 줄만 보여서 "대화 내용이 저장 안 됐다" 처럼
-              // 보였는데, 실제로는 messages 가 모두 DB 에 있다.
+              // 메시지를 created_at + turn_index + sequence_in_turn 기준으로
+              // 안정 정렬. uuid 기준 정렬은 시간순이 보장되지 않아서, 같은 턴 안에서
+              // assistant/user 가 뒤바뀌어 보이는 일이 있었다.
               const orderedMessages =
                 (session.messages ?? [])
                   .slice()
-                  .sort((left, right) =>
-                    String(
-                      left.id ?? ""
-                    ).localeCompare(
-                      String(right.id ?? "")
+                  .sort((left, right) => {
+                    const leftTime =
+                      left.created_at || "";
+                    const rightTime =
+                      right.created_at || "";
+                    const timeDiff =
+                      leftTime.localeCompare(
+                        rightTime
+                      );
+                    if (timeDiff !== 0)
+                      return timeDiff;
+                    const leftTurn =
+                      left.turn_index ?? 0;
+                    const rightTurn =
+                      right.turn_index ?? 0;
+                    if (
+                      leftTurn !== rightTurn
                     )
-                  );
+                      return (
+                        leftTurn - rightTurn
+                      );
+                    return (
+                      (left.sequence_in_turn ??
+                        0) -
+                      (right.sequence_in_turn ??
+                        0)
+                    );
+                  });
 
               return (
                 <div

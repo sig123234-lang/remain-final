@@ -33,7 +33,10 @@ export type SessionCommandType =
   | "safety_pause"
   | "take_over"
   | "note"
-  | "end_session";
+  | "end_session"
+  // 위험도 high 누적 3회로 자동 일시중단됐을 때, 진행자가 "계속하기" 결정한 경우
+  // 발급. highRiskCount 를 리셋하고 action 을 "continue" 로 되돌린다.
+  | "resume_after_safety";
 
 export type SessionCommandStatus =
   | "queued"
@@ -64,6 +67,11 @@ export interface SessionRuntimeState {
   activeRecommendationId: string | null;
   activeCommandId: string | null;
   lastSpeaker: "assistant" | "user" | "admin" | "system";
+  /**
+   * 누적 high 위험도 횟수. 3 도달 시 자동으로 대화를 일시중단하고
+   * 진행자가 계속 진행할지/마무리할지 결정한다.
+   */
+  highRiskCount?: number;
 }
 
 export interface SessionRecord {
