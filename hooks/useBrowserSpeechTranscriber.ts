@@ -11,6 +11,35 @@ type StartListeningOptions = {
   onError?: (error: string) => void;
 };
 
+/** persisted 의 끝과 next 의 시작이 겹치는 가장 긴 길이만큼 next 를 잘라낸다. */
+function joinWithSuffixDedup(
+  persisted: string,
+  next: string
+) {
+  if (!persisted) return next;
+  if (!next) return persisted;
+  const maxOverlap = Math.min(
+    persisted.length,
+    next.length
+  );
+  let overlap = 0;
+  for (let len = maxOverlap; len > 0; len -= 1) {
+    if (
+      persisted.endsWith(next.substring(0, len))
+    ) {
+      overlap = len;
+      break;
+    }
+  }
+  const sep =
+    overlap === 0 && persisted && next
+      ? " "
+      : "";
+  return (
+    persisted + sep + next.substring(overlap)
+  );
+}
+
 export function useBrowserSpeechTranscriber() {
   const recognitionRef =
     useRef<SpeechRecognition | null>(null);
@@ -19,6 +48,8 @@ export function useBrowserSpeechTranscriber() {
   const latestCombinedTranscriptRef = useRef("");
   /** 사용자가 명시적으로 stopListening 호출했는지. true면 onerror=aborted 가 정상 흐름이라 노출 안 함. */
   const manualStopRef = useRef(false);
+  /** 자동 재시작으로 인스턴스가 새로 생길 때 이전까지의 final 을 보존. */
+  const persistedTextRef = useRef("");
   const [transcript, setTranscript] =
     useState("");
   const isSupported =
@@ -30,14 +61,16 @@ export function useBrowserSpeechTranscriber() {
 
   const resetTranscript = useCallback(() => {
     finalTranscriptRef.current = "";
+    persistedTextRef.current = "";
     latestCombinedTranscriptRef.current = "";
     setTranscript("");
   }, []);
 
   const startListening = useCallback(
-    (
-      options: StartListeningOptions = {}
-    ): boolean => {
+    function start(
+      options: StartListeningOptions = {},
+      preserveTranscript = false
+    ): boolean {
       if (typeof window === "undefined") {
         return false;
       }
@@ -64,7 +97,21 @@ export function useBrowserSpeechTranscriber() {
         }
       }
 
-      resetTranscript();
+      if (preserveTranscript) {
+        // 자동 재시작 — 이전까지의 final 을 persisted 로 옮기고 새 인스턴스는
+        // 빈 finalTranscriptRef 로 시작. 새 인스턴스가 같은 단어를 다시 emit 해도
+        // joinWithSuffixDedup 이 persisted suffix 와 겹치는 부분을 잘라낸다.
+        if (finalTranscriptRef.current) {
+          persistedTextRef.current =
+            joinWithSuffixDedup(
+              persistedTextRef.current,
+              finalTranscriptRef.current
+            );
+        }
+        finalTranscriptRef.current = "";
+      } else {
+        resetTranscript();
+      }
       manualStopRef.current = false;
 
       const recognition = new recognitionCtor();
@@ -124,9 +171,18 @@ export function useBrowserSpeechTranscriber() {
         const finalText = deduped.join(" ").trim();
 
         finalTranscriptRef.current = finalText;
+        // persisted + 현재 인스턴스 final + interim. persisted 와 새 final 사이는
+        // suffix-prefix overlap dedup (자동 재시작 시 같은 단어가 다시 emit 되는 케이스).
+        const persistedPlusFinal =
+          joinWithSuffixDedup(
+            persistedTextRef.current,
+            finalText
+          );
         const combined = (
-          finalText +
-          (finalText && interimText ? " " : "") +
+          persistedPlusFinal +
+          (persistedPlusFinal && interimText
+            ? " "
+            : "") +
           interimText
         ).trim();
 
@@ -198,18 +254,23 @@ export function useBrowserSpeechTranscriber() {
       };
 
       recognition.onend = () => {
-        // 이전 버전은 자동 재시작 (preserveTranscript=true) 으로 침묵 끊김 방지를
-        // 시도했지만, 모바일 STT 가 자동 재시작 후 이전 컨텍스트를 다시 emit 하면서
-        // "나 → 나 나 → 나 나 나 ..." 누적 반복 증상의 직접 원인이 됐다.
-        //
-        // continuous=true 한 인스턴스로 충분히 길게 듣는다(모바일 OS 가 강제 종료하기
-        // 전까지). OS 가 끊으면 그동안 받은 transcript 그대로 보존되므로 어르신이
-        // 정지 버튼을 누르면 정상 전송된다. 자동 재시작은 안 한다.
-        if (
-          recognitionRef.current === recognition
-        ) {
-          recognitionRef.current = null;
+        if (manualStopRef.current) {
+          return;
         }
+        if (
+          recognitionRef.current !== recognition
+        ) {
+          return;
+        }
+        // 어르신이 답하다 뜸을 들이면 모바일 OS 가 SpeechRecognition 을 자동 종료한다.
+        // 사용자가 정지 버튼을 누르지 않은 상태면 = 아직 답하는 중. 새 인스턴스로
+        // 즉시 재개해서 마이크가 닫히지 않게 한다. preserveTranscript=true 로 호출해
+        // 그동안 받은 final 을 persistedTextRef 로 옮기고, 자동 재시작 후 새 final 이
+        // 이전 단어를 다시 emit 해도 joinWithSuffixDedup 가 중복을 잘라낸다.
+        window.setTimeout(() => {
+          if (manualStopRef.current) return;
+          start(options, true);
+        }, 0);
       };
 
       recognitionRef.current = recognition;
