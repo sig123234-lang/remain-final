@@ -13,7 +13,6 @@ import {
   REMAIN_DEFAULT_ELDER_ID,
   REMAIN_FIRST_QUESTION,
 } from "@/lib/remain-config";
-import { loadAdminPreferences } from "@/lib/preferences";
 import {
   addMessage,
   createInitialRuntimeState,
@@ -143,26 +142,46 @@ export function useSessionRuntime({
     setIsEndingSession(true);
 
     try {
-      if (
-        loadAdminPreferences()
-          .autoSummary
-      ) {
+      // 어르신이 "오늘 이야기 마무리하기" 누르면 항상 요약을 저장한다.
+      // (admin autoSummary preference 와 무관하게 — 그건 진행자 측 정책이고
+      //  어르신 측 종료 흐름은 무조건 기록을 남겨야 talk/records 에서 보인다.)
+      const elderUtterances = messages.filter(
+        (message) => message.role === "user"
+      );
+      const aiUtterances = messages.filter(
+        (message) => message.role === "assistant"
+      );
+      const fallbackSummary =
+        currentState.sessionSummary ||
+        (elderUtterances.length > 0
+          ? `어르신이 ${elderUtterances.length}번 이야기를 나누셨어요.`
+          : "오늘 이야기가 짧게 마무리됐어요.");
+
+      try {
         await saveSessionSummary({
           sessionId,
           elderId: effectiveElderId,
-          summary:
-            currentState.sessionSummary,
-          familyFriendlySummary:
-            currentState.sessionSummary,
-          emotions: [
-            currentState.emotionDetected,
-          ],
+          summary: fallbackSummary,
+          familyFriendlySummary: fallbackSummary,
+          emotions: currentState.emotionDetected
+            ? [currentState.emotionDetected]
+            : [],
         });
+      } catch (summaryError) {
+        // 요약 저장이 실패해도 endSession 자체는 진행한다.
+        console.error(
+          "saveSessionSummary failed during finalize",
+          summaryError,
+          {
+            elderTurns: elderUtterances.length,
+            aiTurns: aiUtterances.length,
+          }
+        );
       }
 
       await endSession(
         sessionId,
-        currentState.sessionSummary,
+        fallbackSummary,
         currentState.emotionDetected,
         currentState
       );
@@ -180,6 +199,7 @@ export function useSessionRuntime({
     currentState,
     effectiveElderId,
     isEndingSession,
+    messages,
     sessionStorageKey,
     sessionId,
   ]);

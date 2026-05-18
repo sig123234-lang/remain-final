@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -26,11 +27,14 @@ export default function StoryClientPage({
 }: {
   elderId?: string;
 }) {
+  const router = useRouter();
   const {
     currentQuestion,
     currentState,
     error,
+    finalizeSession,
     initializeSession,
+    isEndingSession,
     isLoading,
     sessionId,
     sessionStatus,
@@ -55,42 +59,47 @@ export default function StoryClientPage({
     useTalkPreferencesStore();
   const spokenCommandRef =
     useRef<string | null>(null);
+  /**
+   * processUserTurn 이 동시에 두 번 발화되지 않게 가드.
+   * - stop 버튼 + STT 자동 종료(onAutoStop) 가 거의 동시에 발생할 수 있음.
+   * - 이전엔 같은 답이 두 번 AI 로 전송돼 "반복 녹음" 처럼 보였다.
+   */
+  const isProcessingTurnRef = useRef(false);
   const activeCommandId =
     currentState.activeCommandId;
-  const hasSession =
-    Boolean(sessionId);
+  const hasSession = Boolean(sessionId);
 
   /**
    * iOS Safari / iPadOS / Samsung Internet 은 `speechSynthesis.speak()` 가
    * user gesture 와 같은 task 에서 실행돼야 소리를 낸다. `await` 가 끼면
    * activation 이 만료돼 에러 없이 무시된다.
-   *
-   * 모든 사용자 탭의 맨 처음에 동기로 호출해서 speech 세션을 활성화해 두면
-   * 그 뒤로 async 안에서 호출하는 speak() 도 같은 세션에 큐잉돼 정상 재생된다.
    */
-  const primeSpeechSynthesis =
-    useCallback(() => {
-      if (typeof window === "undefined") {
-        return;
-      }
-      if (!("speechSynthesis" in window)) {
-        return;
-      }
+  const primeSpeechSynthesis = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!("speechSynthesis" in window)) {
+      return;
+    }
 
-      // 이미 떠 있는 큐를 비우고 거의 들리지 않는 짧은 발화를 큐잉.
-      // 이 자체가 user gesture 안의 speak() 라 iOS 가 받아들이며,
-      // 이후 같은 gesture 체인에서 호출되는 speak() 도 함께 허용된다.
-      const primer =
-        new SpeechSynthesisUtterance(" ");
-      primer.volume = 0;
-      primer.rate = 1;
-      primer.lang = "ko-KR";
-      try {
-        window.speechSynthesis.speak(primer);
-      } catch {
-        // 어떤 브라우저는 speak() 가 throw 할 수 있다. 무시.
-      }
-    }, []);
+    const primer = new SpeechSynthesisUtterance(
+      " "
+    );
+    primer.volume = 0;
+    primer.rate = 1;
+    primer.lang = "ko-KR";
+    try {
+      window.speechSynthesis.speak(primer);
+    } catch {
+      /* noop */
+    }
+  }, []);
+
+  // 큰 useCallback 사슬에서 `speak` 보다 `handleFinalTranscript` 가 먼저 정의돼야
+  // startListening 의 onAutoStop 콜백으로 넘길 수 있다. 그래서 ref 우회.
+  const handleFinalTranscriptRef = useRef<
+    (text: string) => Promise<void>
+  >(async () => undefined);
 
   const speak = useCallback(
     (text: string) => {
@@ -104,11 +113,9 @@ export default function StoryClientPage({
         return;
       }
 
-      // primer 가 막 큐잉됐을 때는 cancel() 하면 iOS 가 세션 자체를 잠가버려
-      // 본격 speak 도 무음이 된다. 그래서 cancel 은 호출하지 않고 큐 뒤에 그냥
-      // 붙인다. (primer 는 volume 0 이라 사용자는 들리지 않음)
-      const utterance =
-        new SpeechSynthesisUtterance(text);
+      const utterance = new SpeechSynthesisUtterance(
+        text
+      );
 
       utterance.lang = "ko-KR";
       utterance.rate = getSpeechRateValue(
@@ -131,19 +138,31 @@ export default function StoryClientPage({
       utterance.onend = () => {
         setStatus("listening");
 
-        startListening((message) => {
-          setBrowserError(message);
-          setStatus("waiting");
+        startListening({
+          onError: (message) => {
+            setBrowserError(message);
+            setStatus("waiting");
+          },
+          onAutoStop: (finalText) => {
+            void handleFinalTranscriptRef.current(
+              finalText
+            );
+          },
         });
       };
 
       utterance.onerror = () => {
-        // 모바일에서 speech 가 silently 실패한 경우라도 흐름은 진행되게
-        // 한다. listening 단계로 넘어가서 사용자가 답할 수 있도록.
         setStatus("listening");
-        startListening((message) => {
-          setBrowserError(message);
-          setStatus("waiting");
+        startListening({
+          onError: (message) => {
+            setBrowserError(message);
+            setStatus("waiting");
+          },
+          onAutoStop: (finalText) => {
+            void handleFinalTranscriptRef.current(
+              finalText
+            );
+          },
         });
       };
 
@@ -157,44 +176,32 @@ export default function StoryClientPage({
     ]
   );
 
-  const startListeningFromUi = () => {
-    if (!isSupported) {
-      setBrowserError(
-        "이 브라우저에서는 음성 인식이 지원되지 않아요."
-      );
-      return;
-    }
-
-    setBrowserError(null);
-    setStatus("listening");
-
-    startListening((message) => {
-      setBrowserError(message);
-      setStatus("waiting");
-    });
-  };
-
-  const stopListeningFromUi =
-    async () => {
-      // 모바일 TTS user-gesture 토큰을 유지하기 위해 즉시 prime.
-      primeSpeechSynthesis();
-
-      const finalTranscript = stopListening();
-
-      setStatus("thinking");
-
-      if (!finalTranscript) {
-        resetTranscript();
-        speak(
-          "괜찮아요. 천천히 생각나시는 만큼 말씀해 주세요."
-        );
+  /**
+   * 어르신 발화 한 turn 을 끝까지 처리. stop 버튼 / STT 자동 종료 둘 다 여기로 모인다.
+   * 동시 호출 방지 ref 로 한 turn 당 한 번만 실행.
+   */
+  const handleFinalTranscript = useCallback(
+    async (finalTranscript: string) => {
+      if (isProcessingTurnRef.current) {
         return;
       }
 
-      try {
-        const result =
-          await processUserTurn(finalTranscript);
+      const cleaned = finalTranscript.trim();
 
+      if (!cleaned) {
+        // 침묵 또는 인식 실패 — 다시 들을 준비
+        resetTranscript();
+        setStatus("waiting");
+        return;
+      }
+
+      isProcessingTurnRef.current = true;
+      setStatus("thinking");
+
+      try {
+        const result = await processUserTurn(
+          cleaned
+        );
         resetTranscript();
 
         if (result?.ttsText) {
@@ -213,27 +220,50 @@ export default function StoryClientPage({
         speak(
           "잠시 연결이 불안정해요. 다시 한번 이야기해볼까요?"
         );
+      } finally {
+        isProcessingTurnRef.current = false;
       }
-    };
+    },
+    [
+      processUserTurn,
+      resetTranscript,
+      setStatus,
+      speak,
+    ]
+  );
+
+  // ref 에 최신 콜백 동기화 — speak 의 onend 가 capture 한 콜백이 stale 되지 않게.
+  useEffect(() => {
+    handleFinalTranscriptRef.current =
+      handleFinalTranscript;
+  }, [handleFinalTranscript]);
+
+  const stopAndProcess = useCallback(() => {
+    primeSpeechSynthesis();
+    const finalTranscript = stopListening();
+    void handleFinalTranscript(finalTranscript);
+  }, [
+    handleFinalTranscript,
+    primeSpeechSynthesis,
+    stopListening,
+  ]);
 
   const handleVoiceButton = async () => {
-    if (isLoading) {
+    if (isLoading || isEndingSession) {
       return;
     }
 
-    // ⚠️ 이 한 줄이 모바일 TTS 의 핵심. 어떤 분기로 가든 user gesture
-    // 안에서 동기로 speech 세션을 잡아둬야 이후 async speak() 가 살아남는다.
+    // 모바일 TTS 활성화: 모든 분기 앞에 동기 prime.
     primeSpeechSynthesis();
 
     if (!sessionId) {
       setBrowserError(null);
       setStatus("thinking");
 
-      // 첫 질문은 default value 가 있으니 init 을 기다리지 않고 바로 읽어 준다.
-      // 이렇게 하면 모바일에서도 user gesture 동기 컨텍스트 안에서 speak 가 호출된다.
       speak(currentQuestion);
 
-      const nextSessionId = await initializeSession();
+      const nextSessionId =
+        await initializeSession();
 
       if (!nextSessionId) {
         setStatus("waiting");
@@ -253,12 +283,67 @@ export default function StoryClientPage({
 
     if (status === "speaking") {
       window.speechSynthesis.cancel();
-      startListeningFromUi();
+      if (!isSupported) {
+        setBrowserError(
+          "이 브라우저에서는 음성 인식이 지원되지 않아요."
+        );
+        return;
+      }
+      setBrowserError(null);
+      setStatus("listening");
+      startListening({
+        onError: (message) => {
+          setBrowserError(message);
+          setStatus("waiting");
+        },
+        onAutoStop: (finalText) => {
+          void handleFinalTranscript(finalText);
+        },
+      });
       return;
     }
 
     if (status === "listening") {
-      void stopListeningFromUi();
+      stopAndProcess();
+    }
+  };
+
+  const handleEndSession = async () => {
+    if (!sessionId || isEndingSession) {
+      return;
+    }
+
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "오늘 이야기를 마무리할까요? 저장된 내용은 기록에서 다시 보실 수 있어요."
+      )
+    ) {
+      return;
+    }
+
+    // 진행 중인 음성 인식/합성 정리
+    if (typeof window !== "undefined") {
+      window.speechSynthesis.cancel();
+    }
+    stopListening();
+    resetTranscript();
+    setStatus("thinking");
+
+    try {
+      await finalizeSession();
+      // 종료 후 기록 화면으로 이동
+      const target = elderId
+        ? `/talk/records?elderId=${elderId}`
+        : "/talk/records";
+      router.replace(target);
+    } catch (caughtError) {
+      setBrowserError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "세션을 마무리하지 못했어요."
+      );
+      setStatus("waiting");
     }
   };
 
@@ -277,7 +362,6 @@ export default function StoryClientPage({
     ) {
       return;
     }
-
     window.speechSynthesis.cancel();
   }, [sessionStatus]);
 
@@ -293,9 +377,7 @@ export default function StoryClientPage({
       return;
     }
 
-    spokenCommandRef.current =
-      activeCommandId;
-
+    spokenCommandRef.current = activeCommandId;
     setTimeout(() => {
       speak(currentQuestion);
     }, 300);
@@ -312,26 +394,24 @@ export default function StoryClientPage({
       ? browserError || error
       : error ||
         "진행자가 세션을 종료했어요. 새 세션에서 다시 시작해 주세요.";
-  const headline =
-    hasSession
-      ? currentQuestion
-      : "준비가 되면 아래 버튼을 눌러 이야기를 시작해요.";
-  const questionTextClass =
-    getQuestionTextClass(
-      preferences.fontSize
-    );
-  const bodyTextClass =
-    getBodyTextClass(
-      preferences.fontSize
-    );
+  const headline = hasSession
+    ? currentQuestion
+    : "준비가 되면 아래 버튼을 눌러 이야기를 시작해요.";
+  const questionTextClass = getQuestionTextClass(
+    preferences.fontSize
+  );
+  const bodyTextClass = getBodyTextClass(
+    preferences.fontSize
+  );
 
   return (
-    <div className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#fff4e5_0%,#f6ead9_45%,#edf3e8_100%)] px-6 pt-6 text-[#3d3128]">
-      <div className="mx-auto flex min-h-screen max-w-md flex-col pb-32">
+    <div className="min-h-[100dvh] bg-[radial-gradient(circle_at_top,#fff4e5_0%,#f6ead9_45%,#edf3e8_100%)] text-[#3d3128]">
+      {/* 스크롤 가능 영역. 하단의 fixed 컨트롤 (voice+종료+BottomTab) 만큼 패딩 */}
+      <div className="mx-auto flex max-w-md flex-col px-6 pt-6 pb-[260px]">
         <Header subtitle="편안하게 이야기를 이어가볼까요?" />
 
-        <main className="flex flex-1 flex-col items-center pt-10">
-          <div className="mt-6">
+        <main className="flex flex-col items-center pt-4">
+          <div className="mt-2 scale-[0.78] sm:scale-90">
             <SeasonalOrb
               status={status}
               season="spring"
@@ -339,7 +419,7 @@ export default function StoryClientPage({
             />
           </div>
 
-          <div className="mt-10 text-center">
+          <div className="mt-4 w-full text-center">
             <p className="text-sm font-bold text-[#8a715c]">
               {hasSession
                 ? "이야기 도우미가 여쭤볼게요"
@@ -347,13 +427,13 @@ export default function StoryClientPage({
             </p>
 
             <h3
-              className={`mt-5 font-black leading-[1.5] tracking-tight ${questionTextClass}`}
+              className={`mt-4 font-black leading-[1.4] tracking-tight ${questionTextClass}`}
             >
               {headline}
             </h3>
 
             {statusMessage && (
-              <div className="mt-6 rounded-[24px] bg-[#fff2ef] px-5 py-4 text-left shadow-sm ring-1 ring-[#f1d4c9]">
+              <div className="mt-5 rounded-[20px] bg-[#fff2ef] px-4 py-3 text-left shadow-sm ring-1 ring-[#f1d4c9]">
                 <p className="text-sm leading-[1.7] text-[#7a564f]">
                   {statusMessage}
                 </p>
@@ -361,11 +441,10 @@ export default function StoryClientPage({
             )}
 
             {lastAnswer && (
-              <div className="mt-6 rounded-[24px] bg-[#fffaf2]/92 px-5 py-4 shadow-sm ring-1 ring-white/90">
+              <div className="mt-5 rounded-[20px] bg-[#fffaf2]/92 px-4 py-3 text-left shadow-sm ring-1 ring-white/90">
                 <p className="text-sm font-bold text-[#8a7463]">
                   들은 이야기
                 </p>
-
                 <p
                   className={`mt-2 leading-[1.7] text-[#6f5d50] ${bodyTextClass}`}
                 >
@@ -374,16 +453,33 @@ export default function StoryClientPage({
               </div>
             )}
           </div>
-
-          <div className="mt-10 w-full">
-            <VoiceActionButton
-              status={status}
-              onClick={() => {
-                void handleVoiceButton();
-              }}
-            />
-          </div>
         </main>
+      </div>
+
+      {/* 하단 고정 컨트롤: 큰 음성 버튼 + 종료 버튼. BottomTab 위에 안전하게 layered */}
+      <div className="fixed bottom-[88px] left-0 right-0 z-40 px-6">
+        <div className="mx-auto max-w-md space-y-3">
+          <VoiceActionButton
+            status={status}
+            onClick={() => {
+              void handleVoiceButton();
+            }}
+          />
+          {hasSession && sessionStatus === "active" && (
+            <button
+              type="button"
+              onClick={() => {
+                void handleEndSession();
+              }}
+              disabled={isEndingSession}
+              className="flex h-12 w-full items-center justify-center rounded-2xl bg-white/85 text-sm font-bold text-[#8a715c] shadow-sm ring-1 ring-white/70 backdrop-blur active:scale-[0.99] disabled:opacity-60"
+            >
+              {isEndingSession
+                ? "오늘 이야기 마무리하는 중..."
+                : "오늘 이야기 마무리하기"}
+            </button>
+          )}
+        </div>
       </div>
 
       <BottomTab />

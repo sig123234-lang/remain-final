@@ -117,22 +117,27 @@ function RecordsPageBody({
             )}
 
           <div className="space-y-5">
-
             {sessions.map((session) => {
-              const firstUserMessage =
-                session.messages?.find(
-                  (m) =>
-                    m.role === "user"
-                );
+              // 시간순으로 정렬된 전체 메시지를 채팅 형태로 노출.
+              // 이전엔 첫 user 발화 한 줄만 보여서 "대화 내용이 저장 안 됐다" 처럼
+              // 보였는데, 실제로는 messages 가 모두 DB 에 있다.
+              const orderedMessages =
+                (session.messages ?? [])
+                  .slice()
+                  .sort((left, right) =>
+                    String(
+                      left.id ?? ""
+                    ).localeCompare(
+                      String(right.id ?? "")
+                    )
+                  );
 
               return (
                 <div
                   key={session.id}
                   className="rounded-[30px] bg-white/88 p-6 shadow-[0_18px_50px_rgba(93,68,42,0.08)] ring-1 ring-white/90"
                 >
-                  
                   <div className="flex items-center justify-between">
-                    
                     <div>
                       <p className="text-sm text-[#8a7463]">
                         {new Date(
@@ -145,6 +150,10 @@ function RecordsPageBody({
                       >
                         함께 나눈 이야기
                       </h3>
+
+                      <p className="mt-1 text-xs text-[#8a7463]">
+                        {orderedMessages.length}개의 말씀이 담겨있어요
+                      </p>
                     </div>
 
                     <div className="rounded-full bg-[#edf4ec] px-3 py-1 text-xs font-bold text-[#6f9075]">
@@ -153,35 +162,61 @@ function RecordsPageBody({
                     </div>
                   </div>
 
-                  <div className="mt-5 rounded-[22px] bg-[#faf6ef] p-5">
-                    
-                    <p className="text-sm font-bold text-[#8a7463]">
-                      기억의 한 조각
-                    </p>
+                  {session.summary && (
+                    <div className="mt-5 rounded-[22px] bg-[#faf6ef] p-5">
+                      <p className="text-sm font-bold text-[#8a7463]">
+                        오늘의 요약
+                      </p>
+                      <p
+                        className={`mt-3 leading-[1.8] text-[#5e5148] ${bodyTextClass}`}
+                      >
+                        {session.summary}
+                      </p>
+                    </div>
+                  )}
 
-                    <p
-                      className={`mt-3 leading-[1.8] text-[#5e5148] ${bodyTextClass}`}
-                    >
-                      {firstUserMessage
-                        ?.content ||
-                        "따뜻한 이야기를 나누셨어요."}
-                    </p>
-                  </div>
-
-                  <div className="mt-5 flex flex-wrap gap-2">
-                    
-                    <span className="rounded-full bg-[#f4eadb] px-3 py-1 text-sm text-[#7c6857]">
-                      #추억
-                    </span>
-
-                    <span className="rounded-full bg-[#edf4ec] px-3 py-1 text-sm text-[#6f9075]">
-                      #이야기
-                    </span>
-
-                    <span className="rounded-full bg-[#f8efe4] px-3 py-1 text-sm text-[#9c7554]">
-                      #기억
-                    </span>
-                  </div>
+                  {orderedMessages.length > 0 ? (
+                    <div className="mt-5 space-y-2">
+                      <p className="text-sm font-bold text-[#8a7463]">
+                        나눈 이야기
+                      </p>
+                      <div className="space-y-2 rounded-[22px] bg-[#faf6ef] p-4">
+                        {orderedMessages.map(
+                          (message) => {
+                            const isElder =
+                              message.role ===
+                              "user";
+                            return (
+                              <div
+                                key={
+                                  message.id
+                                }
+                                className={`flex ${
+                                  isElder
+                                    ? "justify-end"
+                                    : "justify-start"
+                                }`}
+                              >
+                                <div
+                                  className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-[15px] leading-[1.6] ${
+                                    isElder
+                                      ? "bg-[#e7eedd] text-[#3d4a35]"
+                                      : "bg-white text-[#5e5148] ring-1 ring-white/90"
+                                  }`}
+                                >
+                                  {message.content}
+                                </div>
+                              </div>
+                            );
+                          }
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-5 rounded-[22px] bg-[#faf6ef] p-5 text-center text-sm text-[#8a7463]">
+                      이 세션에는 아직 저장된 대화가 없어요.
+                    </div>
+                  )}
                 </div>
               );
             })}

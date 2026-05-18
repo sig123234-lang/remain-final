@@ -90,9 +90,10 @@ export async function POST(req: Request) {
         ],
 
         temperature: 0.7,
-        // JSON 응답이 (speech + tts_text + 메타데이터 + 추천 3개)를 모두 담아야 한다.
-        // 300으로는 항상 잘려 SyntaxError 가 발생하던 문제 → 1200 으로 상향.
-        max_tokens: 1200,
+        // 출력 토큰 수가 클수록 OpenAI 응답 latency 가 길어진다. 실제 응답은
+        // speech(~80자) + tts_text + 메타필드 + recommendations 3개 합쳐 ~600~800
+        // 토큰이라 850 으로 잡으면 잘리지도 않고 평균 대화 응답이 1~3초 빨라진다.
+        max_tokens: 850,
       });
 
     const choice = completion.choices[0];
