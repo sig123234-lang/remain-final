@@ -12,6 +12,7 @@ import BottomTab from "@/components/talk/BottomTab";
 import Header from "@/components/talk/Header";
 import SeasonalOrb from "@/components/talk/SeasonalOrb";
 import VoiceActionButton from "@/components/talk/VoiceActionButton";
+import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useBrowserSpeechTranscriber } from "@/hooks/useBrowserSpeechTranscriber";
 import { useTalkPreferencesStore } from "@/hooks/usePreferenceStore";
 import { useSessionRuntime } from "@/hooks/useSessionRuntime";
@@ -60,6 +61,11 @@ export default function StoryClientPage({
     stopListening,
     resetTranscript,
   } = useBrowserSpeechTranscriber();
+  const {
+    isSupported: isRecorderSupported,
+    startRecording,
+    stopRecording,
+  } = useAudioRecorder();
   const [browserError, setBrowserError] =
     useState<string | null>(null);
   const { preferences } =
@@ -172,12 +178,17 @@ export default function StoryClientPage({
         if (advanced) return;
         advanced = true;
         setStatus("listening");
+        // Web Speech 는 화면 미리보기, MediaRecorder 는 실제 chat 입력으로
+        // 보낼 정확한 audio 를 녹음.
         startListening({
           onError: (message) => {
             setBrowserError(message);
             setStatus("waiting");
           },
         });
+        if (isRecorderSupported) {
+          void startRecording();
+        }
       };
 
       const showFallbackHint = () => {
@@ -293,9 +304,11 @@ export default function StoryClientPage({
     [
       cancelCurrentSpeech,
       getAudio,
+      isRecorderSupported,
       preferences.speechRate,
       preferences.voice,
       releaseCurrentAudioUrl,
+      startRecording,
       setStatus,
       startListening,
     ]
@@ -358,9 +371,67 @@ export default function StoryClientPage({
   }, [handleFinalTranscript]);
 
   const stopAndProcess = useCallback(() => {
-    const finalTranscript = stopListening();
-    void handleFinalTranscript(finalTranscript);
-  }, [handleFinalTranscript, stopListening]);
+    // 1. Web Speech 즉시 stop — 화면 미리보기 텍스트는 일단 확보 (fallback).
+    const browserTranscript = stopListening();
+
+    // 2. MediaRecorder 가 안 켜져 있으면 (지원 X 또는 시작 실패) Web Speech 결과 사용.
+    if (!isRecorderSupported) {
+      void handleFinalTranscript(
+        browserTranscript
+      );
+      return;
+    }
+
+    // 3. MediaRecorder blob → /api/transcribe (Whisper) → 정확한 텍스트.
+    //    Whisper 가 실패하거나 빈 결과면 Web Speech 결과로 폴백.
+    setStatus("thinking");
+    void (async () => {
+      try {
+        const blob = await stopRecording();
+        if (!blob || blob.size < 200) {
+          await handleFinalTranscript(
+            browserTranscript
+          );
+          return;
+        }
+        const formData = new FormData();
+        formData.append("audio", blob);
+        const response = await fetch(
+          "/api/transcribe",
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+        const payload = (await response
+          .json()
+          .catch(() => ({}))) as {
+          data?: { text?: string };
+          error?: string;
+        };
+        const whisperText = (
+          payload.data?.text || ""
+        ).trim();
+        const chosen =
+          whisperText || browserTranscript;
+        await handleFinalTranscript(chosen);
+      } catch (caughtError) {
+        console.warn(
+          "Whisper transcribe failed, fallback to browser STT",
+          caughtError
+        );
+        await handleFinalTranscript(
+          browserTranscript
+        );
+      }
+    })();
+  }, [
+    handleFinalTranscript,
+    isRecorderSupported,
+    setStatus,
+    stopListening,
+    stopRecording,
+  ]);
 
   // 위험도 high 가 3회 누적되어 자동 일시중단된 상태인지.
   const isPausedForSafety =
@@ -422,6 +493,9 @@ export default function StoryClientPage({
           setStatus("waiting");
         },
       });
+      if (isRecorderSupported) {
+        void startRecording();
+      }
       return;
     }
 
@@ -446,6 +520,9 @@ export default function StoryClientPage({
 
     cancelCurrentSpeech();
     stopListening();
+    if (isRecorderSupported) {
+      void stopRecording();
+    }
     resetTranscript();
     setStatus("thinking");
 
