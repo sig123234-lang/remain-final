@@ -172,7 +172,7 @@ export default function TodayClientPage({
                 <h2
                   className={`mt-5 font-black leading-[1.4] tracking-tight ${headingClass}`}
                 >
-                  {elderName}은
+                  {elderName}님은
                   <br />
                   오늘도 편안하게
                   <br />
