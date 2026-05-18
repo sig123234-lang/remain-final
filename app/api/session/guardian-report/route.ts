@@ -57,10 +57,14 @@ ${JSON.stringify(input, null, 2)}
 }
 
 export async function POST(req: Request) {
-  let body: { sessionId?: unknown };
+  let body: {
+    sessionId?: unknown;
+    sessionRecord?: unknown;
+  };
   try {
     body = (await req.json()) as {
       sessionId?: unknown;
+      sessionRecord?: unknown;
     };
   } catch {
     return NextResponse.json(
@@ -79,6 +83,24 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
+
+  // v3 session-record 산출물이 함께 전달되면 그걸 우선 사용 (가이드의 정식 입력).
+  // 없으면 raw conversation log fallback 으로 동작.
+  type V3Record = {
+    nextSessionPrep?: Record<string, unknown>;
+    dataPipeline?: {
+      sensitiveContent?: Array<{
+        turnIndex?: number;
+        category?: string;
+        guardianReportFilter?: boolean;
+      }>;
+    };
+  };
+  const providedRecord =
+    body.sessionRecord &&
+    typeof body.sessionRecord === "object"
+      ? (body.sessionRecord as V3Record)
+      : null;
 
   let supabase;
   try {
@@ -155,32 +177,76 @@ export async function POST(req: Request) {
       elder?.full_name ||
       "어르신";
 
-    const userMessage = buildUserMessage({
-      elderlyName,
-      // 보호자 정보는 우리 시스템에 아직 모델이 없다. 일반 호칭으로 폴백.
-      guardianName: "보호자님",
-      guardianRelation: "가족",
-      sessionDate: session.started_at
-        ? new Date(session.started_at)
-            .toISOString()
-            .slice(0, 10)
-        : "",
-      sessionDurationMinutes,
-      conversationLog,
-      sessionSummary:
-        summaryRow?.family_friendly_summary ||
-        summaryRow?.summary ||
-        session.summary ||
-        "",
-      emotionsDetected: summaryRow?.emotions
-        ? summaryRow.emotions.filter(
-            (e): e is string =>
-              typeof e === "string" && e.length > 0
+    // v3 산출물이 제공되면 가이드의 정식 입력 형식으로 LLM 에 전달
+    // (nextSessionPrep + sensitiveFilter). 없으면 raw conversation 폴백.
+    let userMessage: string;
+    if (providedRecord?.nextSessionPrep) {
+      const sensitiveFilter =
+        providedRecord.dataPipeline
+          ?.sensitiveContent
+          ?.filter(
+            (entry) =>
+              entry.guardianReportFilter === true
           )
-        : session.detected_emotion
-          ? [session.detected_emotion]
-          : [],
-    });
+          .map((entry) =>
+            `turnIndex ${entry.turnIndex} — ${entry.category}`
+          ) ?? [];
+      userMessage = `시스템 프롬프트의 모든 절대 원칙·민감 정보 필터링·금지 사항을 그대로
+따라 guardianReport JSON 객체 한 개를 생성해 주세요.
+
+아래는 세션기록 v3 의 nextSessionPrep + sensitiveFilter, 그리고 기본 정보입니다.
+nextSessionPrep 의 keyMemories / emotionalTreasures / nextSessionLeads 를 우선
+활용하세요. sensitiveFilter 에 명시된 turnIndex 의 내용은 절대 포함하지 마세요.
+
+\`\`\`json
+${JSON.stringify(
+  {
+    elderlyName,
+    sessionNumber: null,
+    sessionDate: session.started_at
+      ? new Date(session.started_at)
+          .toISOString()
+          .slice(0, 10)
+      : "",
+    guardianName: "보호자님",
+    guardianRelation: "가족",
+    nextSessionPrep:
+      providedRecord.nextSessionPrep,
+    sensitiveFilter,
+    sessionDurationMinutes,
+  },
+  null,
+  2
+)}
+\`\`\``;
+    } else {
+      userMessage = buildUserMessage({
+        elderlyName,
+        guardianName: "보호자님",
+        guardianRelation: "가족",
+        sessionDate: session.started_at
+          ? new Date(session.started_at)
+              .toISOString()
+              .slice(0, 10)
+          : "",
+        sessionDurationMinutes,
+        conversationLog,
+        sessionSummary:
+          summaryRow?.family_friendly_summary ||
+          summaryRow?.summary ||
+          session.summary ||
+          "",
+        emotionsDetected: summaryRow?.emotions
+          ? summaryRow.emotions.filter(
+              (e): e is string =>
+                typeof e === "string" &&
+                e.length > 0
+            )
+          : session.detected_emotion
+            ? [session.detected_emotion]
+            : [],
+      });
+    }
 
     const completion =
       await openai.chat.completions.create({

@@ -176,6 +176,85 @@ ${buildTranscriptText(messages)}
 `;
 }
 
+type SessionRecordV3 = {
+  nextSessionPrep?: {
+    totalTurns?: number;
+    keyMemories?: Array<{
+      summary?: string;
+      elderlyQuote?: string;
+      emotionalWeight?: string;
+      lifePeriod?: string;
+      turnRange?: number[];
+    }>;
+    emotionalTreasures?: Array<{
+      trigger?: string;
+      elderlyExpression?: string;
+      treasureType?: string;
+      matchedKeyword?: string;
+      depthReached?: string;
+      fullyExplored?: boolean;
+      nextSessionAngle?: string;
+    }>;
+    people?: Array<{
+      name?: string;
+      relation?: string;
+      keyContext?: string;
+      turnsSpent?: number;
+      treasureLinked?: boolean;
+    }>;
+    places?: Array<{
+      name?: string;
+      period?: string;
+      detail?: string;
+    }>;
+    lifePeriodsCovered?: Array<{
+      period?: string;
+      turns?: number;
+      topics?: string[];
+    }>;
+    nextSessionLeads?: Array<{
+      topic?: string;
+      reason?: string;
+      suggestedOpening?: string;
+      priority?: number;
+    }>;
+    avoidInNextSession?: Array<{
+      topic?: string;
+      reason?: string;
+      detectedSignal?: string;
+    }>;
+    facilitatorNotes?: string[];
+  };
+  dataPipeline?: {
+    sttQuality?: {
+      overallConfidence?: number;
+      usableRate?: number;
+      sttGrade?: string;
+    };
+    sensitiveContent?: Array<{
+      turnIndex?: number;
+      category?: string;
+      subcategory?: string;
+      guardianReportFilter?: boolean;
+    }>;
+    emotionalArc?: {
+      peakEmotionalTurn?: number;
+      peakEmotion?: string;
+      emotionalRange?: string[];
+    };
+    audioMetrics?: {
+      laughCount?: number;
+      cryCount?: number;
+      avgElderlyUtteranceSec?: number;
+    };
+    sessionQualityGrade?: {
+      overall?: string;
+      licenseReadyEstimate?: number;
+      flags?: string[];
+    };
+  };
+};
+
 type GuardianReport = {
   guardianReport?: {
     header?: {
@@ -257,6 +336,18 @@ export default function ReportDetailClient({
     guardianError,
     setGuardianError,
   ] = useState<string | null>(null);
+
+  // v3 세션기록 (nextSessionPrep + dataPipeline) 산출물.
+  // 있으면 guardianReport 호출 시 정식 입력으로 함께 전달.
+  const [sessionRecord, setSessionRecord] =
+    useState<SessionRecordV3 | null>(null);
+  const [
+    isGeneratingRecord,
+    setIsGeneratingRecord,
+  ] = useState(false);
+  const [recordError, setRecordError] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -414,6 +505,65 @@ export default function ReportDetailClient({
     window.print();
   };
 
+  const handleGenerateSessionRecord =
+    async () => {
+      if (
+        isGeneratingRecord ||
+        !snapshot ||
+        !sessionId
+      )
+        return;
+      setIsGeneratingRecord(true);
+      setRecordError(null);
+      try {
+        const response = await fetch(
+          "/api/session/session-record",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({ sessionId }),
+          }
+        );
+        const payload = (await response
+          .json()
+          .catch(() => ({}))) as {
+          data?: SessionRecordV3;
+          error?: string;
+        };
+        if (!response.ok || !payload.data) {
+          throw new Error(
+            payload.error ||
+              "세션기록을 생성하지 못했어요."
+          );
+        }
+        setSessionRecord(payload.data);
+      } catch (caughtError) {
+        setRecordError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : "세션기록 생성 중 오류"
+        );
+      } finally {
+        setIsGeneratingRecord(false);
+      }
+    };
+
+  const handleDownloadSessionRecord = () => {
+    if (!sessionRecord) return;
+    downloadFile(
+      `${baseFileName}_세션기록_v3.json`,
+      JSON.stringify(
+        sessionRecord,
+        null,
+        2
+      ),
+      "application/json"
+    );
+  };
+
   const handleGenerateGuardianReport = async () => {
     if (
       isGeneratingGuardian ||
@@ -431,7 +581,12 @@ export default function ReportDetailClient({
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ sessionId }),
+          // v3 산출물이 있으면 함께 보내 가이드가 가정한 정식 입력으로 사용.
+          body: JSON.stringify({
+            sessionId,
+            sessionRecord:
+              sessionRecord || undefined,
+          }),
         }
       );
       const payload = (await response
@@ -680,6 +835,253 @@ export default function ReportDetailClient({
                 </p>
               </section>
             )}
+
+            {/* 심층 세션 분석 (v3) — 진행자/연구자용 */}
+            <section className="no-print mt-10 rounded-[24px] bg-[#eef4ea] p-6 ring-1 ring-[#c5dab9]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-black text-[#3f6135]">
+                    심층 세션 분석 (내부용)
+                  </h2>
+                  <p className="mt-1 text-sm text-[#5f7b62]">
+                    nextSessionPrep + dataPipeline. 보호자에게는 보이지 않음 — 진행자가 다음 세션을 준비할 때 참조.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={
+                      handleGenerateSessionRecord
+                    }
+                    disabled={
+                      isGeneratingRecord
+                    }
+                    className="rounded-xl bg-[#5f7b62] px-4 py-2 text-sm font-bold text-white shadow-sm hover:brightness-110 disabled:opacity-60"
+                  >
+                    {isGeneratingRecord
+                      ? "분석 중..."
+                      : sessionRecord
+                        ? "다시 분석"
+                        : "AI 로 심층 분석 생성"}
+                  </button>
+                  {sessionRecord && (
+                    <button
+                      type="button"
+                      onClick={
+                        handleDownloadSessionRecord
+                      }
+                      className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#2d2a26] shadow-sm ring-1 ring-[#c5dab9] hover:bg-[#f4f9f1]"
+                    >
+                      JSON 다운로드
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {recordError && (
+                <div className="mt-4 rounded-2xl bg-[#fff2ef] px-4 py-3 text-sm text-[#8a5f57]">
+                  {recordError}
+                </div>
+              )}
+
+              {sessionRecord?.nextSessionPrep && (
+                <div className="mt-5 grid gap-3 text-sm md:grid-cols-2">
+                  <div className="rounded-2xl bg-white p-4 ring-1 ring-[#c5dab9]">
+                    <p className="text-xs font-bold uppercase tracking-wide text-[#5f7b62]">
+                      핵심 기억
+                    </p>
+                    <p className="mt-1 text-base font-black">
+                      {sessionRecord
+                        .nextSessionPrep
+                        .keyMemories?.length ??
+                        0}
+                      개
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-white p-4 ring-1 ring-[#c5dab9]">
+                    <p className="text-xs font-bold uppercase tracking-wide text-[#5f7b62]">
+                      감정적 보물
+                    </p>
+                    <p className="mt-1 text-base font-black">
+                      {sessionRecord
+                        .nextSessionPrep
+                        .emotionalTreasures
+                        ?.length ?? 0}
+                      개
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-white p-4 ring-1 ring-[#c5dab9]">
+                    <p className="text-xs font-bold uppercase tracking-wide text-[#5f7b62]">
+                      등장 인물
+                    </p>
+                    <p className="mt-1 text-base font-black">
+                      {sessionRecord
+                        .nextSessionPrep
+                        .people?.length ?? 0}
+                      명
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-white p-4 ring-1 ring-[#c5dab9]">
+                    <p className="text-xs font-bold uppercase tracking-wide text-[#5f7b62]">
+                      등장 장소
+                    </p>
+                    <p className="mt-1 text-base font-black">
+                      {sessionRecord
+                        .nextSessionPrep
+                        .places?.length ?? 0}
+                      곳
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {(sessionRecord?.nextSessionPrep
+                ?.nextSessionLeads?.length ??
+                0) > 0 && (
+                <div className="mt-4">
+                  <p className="text-xs font-bold uppercase tracking-wide text-[#5f7b62]">
+                    다음 세션 연결고리
+                  </p>
+                  <ul className="mt-2 space-y-2">
+                    {sessionRecord?.nextSessionPrep?.nextSessionLeads?.map(
+                      (lead, idx) => (
+                        <li
+                          key={idx}
+                          className="rounded-2xl bg-white p-3 ring-1 ring-[#c5dab9] text-sm"
+                        >
+                          <p className="font-bold text-[#3f6135]">
+                            {idx + 1}.{" "}
+                            {lead.topic}
+                          </p>
+                          {lead.suggestedOpening && (
+                            <p className="mt-1 italic text-[#5f5a53]">
+                              &quot;
+                              {
+                                lead.suggestedOpening
+                              }
+                              &quot;
+                            </p>
+                          )}
+                          {lead.reason && (
+                            <p className="mt-1 text-xs text-[#7a766e]">
+                              {lead.reason}
+                            </p>
+                          )}
+                        </li>
+                      )
+                    )}
+                  </ul>
+                </div>
+              )}
+
+              {(sessionRecord?.dataPipeline
+                ?.sessionQualityGrade ||
+                sessionRecord?.dataPipeline
+                  ?.sttQuality ||
+                sessionRecord?.dataPipeline
+                  ?.emotionalArc) && (
+                <div className="mt-4 grid gap-2 text-sm md:grid-cols-3">
+                  {sessionRecord?.dataPipeline
+                    ?.sessionQualityGrade && (
+                    <div className="rounded-2xl bg-white p-3 ring-1 ring-[#c5dab9]">
+                      <p className="text-xs font-bold uppercase tracking-wide text-[#5f7b62]">
+                        세션 등급
+                      </p>
+                      <p className="mt-1 text-lg font-black">
+                        {
+                          sessionRecord
+                            .dataPipeline
+                            .sessionQualityGrade
+                            .overall
+                        }
+                      </p>
+                      {sessionRecord.dataPipeline
+                        .sessionQualityGrade
+                        .licenseReadyEstimate !==
+                        undefined && (
+                        <p className="text-xs text-[#7a766e]">
+                          데이터셋 적합도{" "}
+                          {Math.round(
+                            (sessionRecord
+                              .dataPipeline
+                              .sessionQualityGrade
+                              .licenseReadyEstimate ||
+                              0) * 100
+                          )}
+                          %
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {sessionRecord?.dataPipeline
+                    ?.sttQuality && (
+                    <div className="rounded-2xl bg-white p-3 ring-1 ring-[#c5dab9]">
+                      <p className="text-xs font-bold uppercase tracking-wide text-[#5f7b62]">
+                        STT 품질
+                      </p>
+                      <p className="mt-1 text-lg font-black">
+                        {sessionRecord.dataPipeline.sttQuality.sttGrade ||
+                          "—"}
+                      </p>
+                      <p className="text-xs text-[#7a766e]">
+                        usable{" "}
+                        {Math.round(
+                          (sessionRecord
+                            .dataPipeline
+                            .sttQuality
+                            .usableRate || 0) *
+                            100
+                        )}
+                        %
+                      </p>
+                    </div>
+                  )}
+                  {sessionRecord?.dataPipeline
+                    ?.emotionalArc && (
+                    <div className="rounded-2xl bg-white p-3 ring-1 ring-[#c5dab9]">
+                      <p className="text-xs font-bold uppercase tracking-wide text-[#5f7b62]">
+                        감정 정점
+                      </p>
+                      <p className="mt-1 text-lg font-black">
+                        {sessionRecord
+                          .dataPipeline
+                          .emotionalArc
+                          .peakEmotion || "—"}
+                      </p>
+                      <p className="text-xs text-[#7a766e]">
+                        turn{" "}
+                        {sessionRecord
+                          .dataPipeline
+                          .emotionalArc
+                          .peakEmotionalTurn ??
+                          "—"}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {(sessionRecord?.dataPipeline
+                ?.sensitiveContent?.length ??
+                0) > 0 && (
+                <div className="mt-4 rounded-2xl bg-[#fff8ec] p-3 ring-1 ring-[#f0e2c4] text-sm text-[#a4814a]">
+                  민감 정보{" "}
+                  {
+                    sessionRecord?.dataPipeline
+                      ?.sensitiveContent?.length
+                  }
+                  건 감지 — 보호자 리포트에서 자동 제외됩니다.
+                </div>
+              )}
+
+              {sessionRecord &&
+                !sessionRecord.nextSessionPrep && (
+                  <p className="mt-4 text-sm text-[#5f7b62]">
+                    분석 결과를 받았지만 nextSessionPrep 가 비어있어요. JSON 을
+                    다운로드해서 직접 확인해 주세요.
+                  </p>
+                )}
+            </section>
 
             {/* 보호자 리포트 (AI 자동 생성) */}
             <section className="mt-10 rounded-[24px] bg-[#fffaf2] p-6 ring-1 ring-[#f0e2c4]">
