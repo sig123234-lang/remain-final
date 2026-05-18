@@ -6,10 +6,12 @@ const openai = new OpenAI({
 
 // 어르신 preferences (talk preferences) 의 voice 옵션 → OpenAI TTS voice 매핑.
 // OpenAI voices: alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer
-// 한국어 자연도는 nova/shimmer (여성), onyx (남성) 가 가장 안정적.
+// - shimmer: 가장 밝고 경쾌한 여성 톤 (요양 어르신 환영하는 분위기에 적합)
+// - coral: 따뜻하면서 친근한 여성 톤 (백업 옵션)
+// - sage: 차분하지만 또렷한 남성 톤
 const VOICE_MAP: Record<string, string> = {
-  "warm-female": "nova",
-  "calm-male": "onyx",
+  "warm-female": "shimmer",
+  "calm-male": "sage",
 };
 
 const ALLOWED_VOICES = new Set([
@@ -80,13 +82,17 @@ export async function POST(req: Request) {
   try {
     const speech = await openai.audio.speech.create({
       model: "tts-1",
-      // OpenAI SDK 의 voice 타입이 좁아 string 인 채로 넘긴다.
+      // OpenAI SDK 의 voice 타입이 좁게 정의돼 있어 명시 cast.
       voice: openaiVoice as
         | "alloy"
+        | "ash"
+        | "ballad"
+        | "coral"
         | "echo"
         | "fable"
         | "onyx"
         | "nova"
+        | "sage"
         | "shimmer",
       input: text,
       response_format: "mp3",

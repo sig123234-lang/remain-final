@@ -27,10 +27,12 @@ const seasonConfig = {
   },
 
   summer: {
+    // 한국 여름: 햇살 노랑 → 풀잎 연녹 → 시원한 하늘색 그러데이션.
     gradient:
-      "from-[#ffe8b8] via-[#fff2d6] to-[#f6f7d9]",
-    particle: "bg-[#ffe08a]",
-    glow: "bg-[#fff1b3]/60",
+      "from-[#fde68a] via-[#d9f5c8] to-[#bae6fd]",
+    // particle 의 기본색은 햇살 노랑. 실제 렌더에서 i 에 따라 풀잎/하늘색과 섞인다.
+    particle: "bg-[#fcd34d]",
+    glow: "bg-[#fde68a]/70",
   },
 
   autumn: {
@@ -196,21 +198,37 @@ export default function SeasonalOrb({
 
             {/* Particles */}
             <div className="absolute inset-0 overflow-hidden rounded-full">
-              
-              {[...Array(8)].map((_, i) => (
-                <span
-                  key={i}
-                  className={`absolute h-2.5 w-2.5 rounded-full ${currentSeason.particle}`}
-                  style={{
-                    left: `${15 + i * 9}%`,
-                    bottom: `${10 + (i % 3) * 8}%`,
-                    animation: `floatParticle ${
-                      3 + i * 0.4
-                    }s ease-in-out infinite`,
-                    animationDelay: `${i * 0.3}s`,
-                  }}
-                />
-              ))}
+
+              {[...Array(8)].map((_, i) => {
+                // summer 일 때는 햇살 노랑 / 풀잎 연녹 / 시원한 하늘 mix 로
+                // "벚꽃이 휘날리는" 봄 분위기를 여름 분위기로 교체.
+                const summerPalette = [
+                  "bg-[#fcd34d]",
+                  "bg-[#86efac]",
+                  "bg-[#7dd3fc]",
+                ];
+                const particleClass =
+                  season === "summer"
+                    ? summerPalette[
+                        i % summerPalette.length
+                      ]
+                    : currentSeason.particle;
+
+                return (
+                  <span
+                    key={i}
+                    className={`absolute h-2.5 w-2.5 rounded-full ${particleClass}`}
+                    style={{
+                      left: `${15 + i * 9}%`,
+                      bottom: `${10 + (i % 3) * 8}%`,
+                      animation: `floatParticle ${
+                        3 + i * 0.4
+                      }s ease-in-out infinite`,
+                      animationDelay: `${i * 0.3}s`,
+                    }}
+                  />
+                );
+              })}
             </div>
           </div>
         </div>

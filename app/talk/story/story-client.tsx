@@ -177,11 +177,6 @@ export default function StoryClientPage({
             setBrowserError(message);
             setStatus("waiting");
           },
-          onAutoStop: (finalText) => {
-            void handleFinalTranscriptRef.current(
-              finalText
-            );
-          },
         });
       };
 
@@ -415,9 +410,6 @@ export default function StoryClientPage({
           setBrowserError(message);
           setStatus("waiting");
         },
-        onAutoStop: (finalText) => {
-          void handleFinalTranscript(finalText);
-        },
       });
       return;
     }
@@ -526,7 +518,7 @@ export default function StoryClientPage({
           <div className="mt-2 scale-[0.78] sm:scale-90">
             <SeasonalOrb
               status={status}
-              season="spring"
+              season="summer"
               showText={false}
             />
           </div>

@@ -9,14 +9,6 @@ import {
 
 type StartListeningOptions = {
   onError?: (error: string) => void;
-  /**
-   * 어르신이 말을 마치고 침묵해서 SpeechRecognition 이 스스로 종료된 경우 호출.
-   * finalTranscript 가 전달된다 (trim된 문자열, 빈 문자열 가능).
-   *
-   * `continuous=false` 설정 덕에 어르신 한 발화가 끝나면 자동 발동.
-   * 어르신이 매번 stop 버튼을 누르지 않아도 자연스럽게 다음 단계로 넘어감.
-   */
-  onAutoStop?: (finalTranscript: string) => void;
 };
 
 export function useBrowserSpeechTranscriber() {
@@ -25,12 +17,8 @@ export function useBrowserSpeechTranscriber() {
   const finalTranscriptRef = useRef("");
   /** 마지막 onresult에서 계산한 전체 전사(확정+임시) — stop 시 React state보다 최신 */
   const latestCombinedTranscriptRef = useRef("");
-  /** 사용자가 명시적으로 stopListening 호출했는지. true면 onend 자동 콜백 skip. */
+  /** 사용자가 명시적으로 stopListening 호출했는지. true면 onerror=aborted 가 정상 흐름이라 노출 안 함. */
   const manualStopRef = useRef(false);
-  const onAutoStopRef =
-    useRef<StartListeningOptions["onAutoStop"]>(
-      undefined
-    );
   const [transcript, setTranscript] =
     useState("");
   const isSupported =
@@ -47,7 +35,12 @@ export function useBrowserSpeechTranscriber() {
   }, []);
 
   const startListening = useCallback(
-    (options: StartListeningOptions = {}) => {
+    // 내부 재귀 호출을 위해 named function expression. preserveTranscript=true
+    // 는 자동 재시작 시에만 외부에서는 안 쓰는 옵션.
+    function start(
+      options: StartListeningOptions = {},
+      preserveTranscript = false
+    ): boolean {
       if (typeof window === "undefined") {
         return false;
       }
@@ -63,23 +56,31 @@ export function useBrowserSpeechTranscriber() {
         return false;
       }
 
-      // 이전 인식 세션이 살아있으면 정리. 이중 시작은 InvalidStateError 를 던진다.
-      recognitionRef.current?.stop();
-      resetTranscript();
+      // 이전 인스턴스 정리. ref 를 먼저 비우는 이유: 그 인스턴스의 onend 가
+      // 자동 재시작 분기로 들어가지 않게 (`ref !== recognition` 으로 판정).
+      const previous = recognitionRef.current;
+      recognitionRef.current = null;
+      if (previous) {
+        try {
+          previous.stop();
+        } catch {
+          /* 이미 종료된 상태 가능 */
+        }
+      }
+
+      if (!preserveTranscript) {
+        resetTranscript();
+      }
       manualStopRef.current = false;
-      onAutoStopRef.current = options.onAutoStop;
 
       const recognition = new recognitionCtor();
 
       recognition.lang = "ko-KR";
       recognition.interimResults = true;
-      // continuous=true 였을 때:
-      //   - 어르신이 한 번 답하고 침묵해도 STT 가 계속 켜져있어
-      //     화면 transcript 가 누적된 모습으로 보이고, 다음 답변까지 한 덩어리로 묶임.
-      //   - 또 다른 발화가 들어오면 final 이 또 더해져서 "같은 답이 반복되는" 처럼 표시.
-      // continuous=false 로 두면 침묵 0.5~1초 후 SpeechRecognition 이 스스로 onend 를 발동.
-      // 그 때 finalTranscript 를 자동으로 다음 턴으로 넘기면 어르신이 stop 을 안 눌러도 흐름이 이어진다.
-      recognition.continuous = false;
+      // 어르신이 충분히 생각하고 말할 수 있도록, 침묵 동안에도 마이크를 끄지 않는다.
+      // 자동 종료를 막아 발화 중간의 긴 호흡이 인식 종료로 이어지지 않게 한다.
+      // 흐름 종료는 어르신이 명시적으로 정지 버튼을 눌러 stopListening() 을 호출했을 때만.
+      recognition.continuous = true;
 
       recognition.onresult = (event) => {
         let interimTranscript = "";
@@ -125,6 +126,19 @@ export function useBrowserSpeechTranscriber() {
           return;
         }
 
+        // 권한·하드웨어·언어 미지원 같은 치명적 에러는 자동 재시작하면 무한 루프.
+        // manualStop 으로 강제 표시해서 onend 의 자동 재시작 분기를 막는다.
+        const fatalErrors = [
+          "not-allowed",
+          "service-not-allowed",
+          "audio-capture",
+          "language-not-supported",
+        ];
+        if (fatalErrors.includes(errorCode)) {
+          manualStopRef.current = true;
+          recognitionRef.current = null;
+        }
+
         // 알려진 에러 코드를 사람이 이해할 수 있는 한국어 안내로 변환.
         let friendly = event.message || "";
         if (errorCode === "no-speech") {
@@ -160,13 +174,23 @@ export function useBrowserSpeechTranscriber() {
       };
 
       recognition.onend = () => {
-        // 명시적 stop 이 아니라 자연 종료 (침묵 감지 등) 인 경우만 자동 콜백.
+        // 명시적 stop 이면 그대로 종료.
         if (manualStopRef.current) {
           return;
         }
-        const finalText =
-          latestCombinedTranscriptRef.current.trim();
-        onAutoStopRef.current?.(finalText);
+        // 이미 다른 startListening 이 진행돼서 ref 가 바뀌었다면 skip.
+        if (
+          recognitionRef.current !== recognition
+        ) {
+          return;
+        }
+        // continuous=true 라도 모바일/일부 브라우저는 시스템 사유로 인식을 끊는다.
+        // 어르신이 정지 버튼을 누르지 않는 한 마이크가 자동으로 닫히지 않도록
+        // 새 인스턴스로 즉시 재시작한다. transcript 누적은 보존.
+        window.setTimeout(() => {
+          if (manualStopRef.current) return;
+          start(options, true);
+        }, 0);
       };
 
       recognitionRef.current = recognition;
@@ -174,6 +198,7 @@ export function useBrowserSpeechTranscriber() {
         recognition.start();
       } catch {
         // start() 가 InvalidStateError 를 던지는 경우 (이미 시작됨)
+        recognitionRef.current = null;
         options.onError?.(
           "음성 인식을 시작하지 못했어요. 잠시 후 다시 시도해 주세요."
         );
