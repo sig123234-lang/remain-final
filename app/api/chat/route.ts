@@ -29,6 +29,10 @@ const OUTPUT_FORMAT_OVERRIDE = `
   "facilitatorNote": "진행자 참고 메모",
   "sessionSummaryUpdate": "짧은 누적 요약",
   "turnSummary": "이번 턴 요약",
+  "currentPerson": "지금 주된 화제의 인물 (예: '아버지', '큰언니', '문방구 아저씨'). 비특정 집단('친구들') 은 빈 문자열.",
+  "currentScene": "지금 다루고 있는 구체 장면 (예: '국제초등학교 등굣길', '대구 집 부엌'). 모르겠으면 빈 문자열.",
+  "currentLifePeriod": "지금 머무는 인생 시기 (예: '초등학교', '중학교', '결혼 전', '직장 시절'). 시기 전환되면 갱신.",
+  "currentTopic": "지금 주된 주제 키워드 (예: '겨울 음식', '아버지와의 추억', '문방구'). 짧게.",
   "recommendations": [
     {
       "question": "진행자가 다음 턴에 사용할 수 있는 대안 질문",
@@ -142,6 +146,23 @@ export async function POST(req: Request) {
         "",
       turnSummary:
         parsed.turnSummary || "",
+      currentPerson:
+        typeof parsed.currentPerson === "string"
+          ? parsed.currentPerson.trim()
+          : "",
+      currentScene:
+        typeof parsed.currentScene === "string"
+          ? parsed.currentScene.trim()
+          : "",
+      currentLifePeriod:
+        typeof parsed.currentLifePeriod ===
+        "string"
+          ? parsed.currentLifePeriod.trim()
+          : "",
+      currentTopic:
+        typeof parsed.currentTopic === "string"
+          ? parsed.currentTopic.trim()
+          : "",
       recommendations: Array.isArray(
         parsed.recommendations
       )

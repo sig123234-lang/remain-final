@@ -709,6 +709,21 @@ export function useSessionRuntime({
           data.sessionSummaryUpdate ||
           currentState.sessionSummary,
         turnSummary: data.turnSummary || "",
+        // 진행자 패널이 실시간 컨텍스트를 볼 수 있도록 AI 가 매 턴 갱신한
+        // 인물/장면/시기/주제를 sessionState 에 반영. 빈 값이면 이전 값 유지
+        // (LLM 이 가끔 모르겠다고 빈 문자열을 보내도 직전 맥락이 사라지지 않게).
+        currentPerson:
+          (data.currentPerson || "").trim() ||
+          currentState.currentPerson,
+        currentScene:
+          (data.currentScene || "").trim() ||
+          currentState.currentScene,
+        currentLifePeriod:
+          (data.currentLifePeriod || "").trim() ||
+          currentState.currentLifePeriod,
+        currentTopic:
+          (data.currentTopic || "").trim() ||
+          currentState.currentTopic,
         lastSpeaker: "assistant",
       };
 

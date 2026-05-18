@@ -189,5 +189,11 @@ export interface ChatCompletionPayload {
   facilitatorNote: string;
   sessionSummaryUpdate: string;
   turnSummary: string;
+  // 어드민 실시간 패널에서 진행자가 현재 어떤 인물/장면/시기를 다루고 있는지
+  // 한눈에 볼 수 있게 LLM 이 매 턴 식별해 채워준다. 빈 문자열이면 "기록 없음" 으로 표시.
+  currentPerson?: string;
+  currentScene?: string;
+  currentLifePeriod?: string;
+  currentTopic?: string;
   recommendations: SessionRecommendationInput[];
 }
