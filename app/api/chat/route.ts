@@ -1,6 +1,11 @@
+import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
-import { REMAIN_CHAT_MODEL } from "@/lib/ai-config";
+import {
+  ANTHROPIC_CHAT_MODEL,
+  getChatProvider,
+  REMAIN_CHAT_MODEL,
+} from "@/lib/ai-config";
 import { INTERVIEWER_SYSTEM_PROMPT_V8 } from "@/lib/ai-prompts";
 import type { ChatCompletionPayload } from "@/types/session";
 
@@ -50,6 +55,81 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+
+/**
+ * Anthropic Messages API 는 OpenAI 의 response_format=json_object 같은
+ * native JSON 모드가 없다. 표준 우회: assistant 메시지를 "{" 로 prefill 해서
+ * 모델이 무조건 JSON 객체로 응답 본문을 계속 쓰게 한다. 응답 텍스트 앞에 "{"
+ * 를 다시 붙여 완전한 JSON 으로 파싱.
+ */
+async function callAnthropic({
+  systemPrompt,
+  outputOverride,
+  sessionStateBlock,
+  conversation,
+}: {
+  systemPrompt: string;
+  outputOverride: string;
+  sessionStateBlock: string;
+  conversation: Array<{
+    role: "user" | "assistant";
+    content: string;
+  }>;
+}): Promise<{
+  raw: string;
+  truncated: boolean;
+  length: number;
+}> {
+  // Anthropic 은 system 을 별도 필드로, 그 외는 user/assistant 의 messages 로.
+  // OUTPUT_FORMAT_OVERRIDE 와 sessionState 는 system 뒤에 user 메시지로 합쳐서 전달.
+  const messages: Anthropic.MessageParam[] = [
+    {
+      role: "user",
+      content: `${outputOverride}\n\n${sessionStateBlock}\n\n다음은 어르신과 이야기 도우미의 대화입니다.\n\n${conversation
+        .map(
+          (m) =>
+            `[${
+              m.role === "assistant"
+                ? "이야기 도우미"
+                : "어르신"
+            }] ${m.content}`
+        )
+        .join(
+          "\n"
+        )}\n\n방금 어르신이 한 마지막 발화에 대한 다음 응답을 위의 JSON 형식으로만 출력하라.`,
+    },
+    {
+      role: "assistant",
+      content: "{",
+    },
+  ];
+
+  const response =
+    await anthropic.messages.create({
+      model: ANTHROPIC_CHAT_MODEL,
+      system: systemPrompt,
+      messages,
+      max_tokens: 1200,
+      temperature: 0.7,
+    });
+
+  const block = response.content[0];
+  const text =
+    block && block.type === "text"
+      ? block.text
+      : "";
+  const raw = "{" + text;
+  return {
+    raw,
+    truncated:
+      response.stop_reason === "max_tokens",
+    length: raw.length,
+  };
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -64,52 +144,67 @@ export async function POST(req: Request) {
       messages
     );
 
-    const completion =
-      await openai.chat.completions.create({
-        model: REMAIN_CHAT_MODEL,
+    const sessionStateBlock = `현재 sessionState (외부 엔진이 계산. 읽기만 하고 갱신하지 마라):\n${JSON.stringify(sessionState)}`;
 
-        response_format: {
-          type: "json_object",
-        },
+    const provider = getChatProvider();
+    console.log("chat provider:", provider);
 
-        messages: [
-          {
-            // 회상치료_실행_프롬프트_v8.md 전문. 절대 규칙·핵심 규칙·예시 모두 포함.
-            // 마지막 출력 형식 섹션은 OUTPUT_FORMAT_OVERRIDE 가 클라이언트 호환
-            // 스키마로 덮어쓴다.
-            role: "system",
-            content:
-              INTERVIEWER_SYSTEM_PROMPT_V8,
+    let raw: string;
+    let truncated = false;
+    let rawLength = 0;
+
+    if (provider === "anthropic") {
+      const anthropicResult = await callAnthropic(
+        {
+          systemPrompt:
+            INTERVIEWER_SYSTEM_PROMPT_V8,
+          outputOverride: OUTPUT_FORMAT_OVERRIDE,
+          sessionStateBlock,
+          conversation: messages,
+        }
+      );
+      raw = anthropicResult.raw;
+      truncated = anthropicResult.truncated;
+      rawLength = anthropicResult.length;
+    } else {
+      const completion =
+        await openai.chat.completions.create({
+          model: REMAIN_CHAT_MODEL,
+          response_format: {
+            type: "json_object",
           },
-          {
-            role: "system",
-            content: OUTPUT_FORMAT_OVERRIDE,
-          },
-          {
-            role: "system",
-            content: `현재 sessionState (외부 엔진이 계산. 읽기만 하고 갱신하지 마라):\n${JSON.stringify(sessionState)}`,
-          },
+          messages: [
+            {
+              role: "system",
+              content:
+                INTERVIEWER_SYSTEM_PROMPT_V8,
+            },
+            {
+              role: "system",
+              content: OUTPUT_FORMAT_OVERRIDE,
+            },
+            {
+              role: "system",
+              content: sessionStateBlock,
+            },
+            ...messages,
+          ],
+          temperature: 0.7,
+          max_tokens: 850,
+        });
 
-          ...messages,
-        ],
-
-        temperature: 0.7,
-        // 출력 토큰 수가 클수록 OpenAI 응답 latency 가 길어진다. 실제 응답은
-        // speech(~80자) + tts_text + 메타필드 + recommendations 3개 합쳐 ~600~800
-        // 토큰이라 850 으로 잡으면 잘리지도 않고 평균 대화 응답이 1~3초 빨라진다.
-        max_tokens: 850,
-      });
-
-    const choice = completion.choices[0];
-    const raw = choice?.message?.content || "{}";
-    const finishReason = choice?.finish_reason;
+      const choice = completion.choices[0];
+      raw = choice?.message?.content || "{}";
+      rawLength = raw.length;
+      truncated =
+        choice?.finish_reason === "length";
+    }
 
     console.log("RAW AI 응답:", raw);
 
-    if (finishReason === "length") {
-      // OpenAI 출력이 잘렸음 → JSON 파싱이 깨지므로 명시적으로 실패시킨다.
+    if (truncated) {
       throw new Error(
-        `OpenAI response truncated (finish_reason=length, length=${raw.length})`
+        `${provider} response truncated (length=${rawLength})`
       );
     }
 
