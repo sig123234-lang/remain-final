@@ -176,6 +176,44 @@ ${buildTranscriptText(messages)}
 `;
 }
 
+type GuardianReport = {
+  guardianReport?: {
+    header?: {
+      elderlyName?: string;
+      sessionDate?: string;
+      sessionNumber?: number | string;
+      greeting?: string;
+    };
+    conversationOverview?: {
+      summary?: string;
+      mainTopics?: string[];
+      duration?: string;
+    };
+    emotionalStateScore?: {
+      score?: number;
+      label?: string;
+      basis?: string;
+      note?: string;
+    };
+    impressiveExcerpts?: Array<{
+      context?: string;
+      elderlyQuote?: string;
+      significance?: string;
+    }>;
+    memoryImagePrompt?: {
+      description?: string;
+      imageGenerationPrompt?: string;
+      sourceMemory?: string;
+      style?: string;
+    } | null;
+    nextSessionPreview?: {
+      text?: string;
+      scheduledDate?: string | null;
+    };
+    closingNote?: string;
+  };
+};
+
 function downloadFile(
   filename: string,
   content: string,
@@ -209,6 +247,16 @@ export default function ReportDetailClient({
   const [error, setError] = useState<
     string | null
   >(null);
+  const [guardianReport, setGuardianReport] =
+    useState<GuardianReport | null>(null);
+  const [
+    isGeneratingGuardian,
+    setIsGeneratingGuardian,
+  ] = useState(false);
+  const [
+    guardianError,
+    setGuardianError,
+  ] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -364,6 +412,107 @@ export default function ReportDetailClient({
   const handlePrint = () => {
     if (typeof window === "undefined") return;
     window.print();
+  };
+
+  const handleGenerateGuardianReport = async () => {
+    if (
+      isGeneratingGuardian ||
+      !snapshot ||
+      !sessionId
+    )
+      return;
+    setIsGeneratingGuardian(true);
+    setGuardianError(null);
+    try {
+      const response = await fetch(
+        "/api/session/guardian-report",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ sessionId }),
+        }
+      );
+      const payload = (await response
+        .json()
+        .catch(() => ({}))) as {
+        data?: GuardianReport;
+        error?: string;
+      };
+      if (!response.ok || !payload.data) {
+        throw new Error(
+          payload.error ||
+            "보호자 리포트를 생성하지 못했어요."
+        );
+      }
+      setGuardianReport(payload.data);
+    } catch (caughtError) {
+      setGuardianError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "보호자 리포트 생성 중 오류"
+      );
+    } finally {
+      setIsGeneratingGuardian(false);
+    }
+  };
+
+  const handleDownloadGuardianReport = () => {
+    if (!guardianReport?.guardianReport) return;
+    const gr = guardianReport.guardianReport;
+    const sections: string[] = [];
+    sections.push(
+      `# 보호자 리포트 — ${gr.header?.elderlyName || elderName}`
+    );
+    if (gr.header?.greeting) {
+      sections.push(`\n${gr.header.greeting}`);
+    }
+    if (gr.conversationOverview?.summary) {
+      sections.push(
+        `\n## 오늘의 이야기\n${gr.conversationOverview.summary}`
+      );
+    }
+    if (
+      gr.conversationOverview?.mainTopics
+        ?.length
+    ) {
+      sections.push(
+        `\n주요 주제: ${gr.conversationOverview.mainTopics.join(", ")}`
+      );
+    }
+    if (gr.conversationOverview?.duration) {
+      sections.push(
+        `대화 시간: ${gr.conversationOverview.duration}`
+      );
+    }
+    if (gr.emotionalStateScore) {
+      const e = gr.emotionalStateScore;
+      sections.push(
+        `\n## 오늘의 컨디션 — ${e.score ?? "?"} / 100\n${e.label || ""}\n${e.basis || ""}\n${e.note || ""}`
+      );
+    }
+    if (gr.impressiveExcerpts?.length) {
+      sections.push(`\n## 인상 깊었던 순간`);
+      gr.impressiveExcerpts.forEach((ex) => {
+        sections.push(
+          `\n- ${ex.context || ""}\n  "${ex.elderlyQuote || ""}"\n  — ${ex.significance || ""}`
+        );
+      });
+    }
+    if (gr.nextSessionPreview?.text) {
+      sections.push(
+        `\n## 다음 시간\n${gr.nextSessionPreview.text}`
+      );
+    }
+    if (gr.closingNote) {
+      sections.push(`\n${gr.closingNote}`);
+    }
+    downloadFile(
+      `${baseFileName}_보호자리포트.md`,
+      sections.join("\n"),
+      "text/markdown"
+    );
   };
 
   return (
@@ -531,6 +680,241 @@ export default function ReportDetailClient({
                 </p>
               </section>
             )}
+
+            {/* 보호자 리포트 (AI 자동 생성) */}
+            <section className="mt-10 rounded-[24px] bg-[#fffaf2] p-6 ring-1 ring-[#f0e2c4]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-black text-[#5e3f25]">
+                    보호자 전달용 리포트
+                  </h2>
+                  <p className="mt-1 text-sm text-[#a4814a]">
+                    가족이 읽기 좋은 부드러운 톤으로 정리. 민감 정보는 자동 필터링.
+                  </p>
+                </div>
+                <div className="no-print flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={
+                      handleGenerateGuardianReport
+                    }
+                    disabled={
+                      isGeneratingGuardian
+                    }
+                    className="rounded-xl bg-[#a4814a] px-4 py-2 text-sm font-bold text-white shadow-sm hover:brightness-110 disabled:opacity-60"
+                  >
+                    {isGeneratingGuardian
+                      ? "생성 중..."
+                      : guardianReport
+                        ? "다시 생성"
+                        : "AI 로 리포트 생성"}
+                  </button>
+                  {guardianReport && (
+                    <button
+                      type="button"
+                      onClick={
+                        handleDownloadGuardianReport
+                      }
+                      className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#2d2a26] shadow-sm ring-1 ring-[#e6dfd2] hover:bg-[#f7f4ee]"
+                    >
+                      보호자 리포트 (.md)
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {guardianError && (
+                <div className="mt-4 rounded-2xl bg-[#fff2ef] px-4 py-3 text-sm text-[#8a5f57]">
+                  {guardianError}
+                </div>
+              )}
+
+              {!guardianReport &&
+                !isGeneratingGuardian &&
+                !guardianError && (
+                  <p className="mt-4 text-sm text-[#7c6857]">
+                    &lsquo;AI 로 리포트 생성&rsquo; 을 누르면 대화 전문을 분석해
+                    보호자가 읽기 좋은 리포트를 만들어요. 임상 용어·민감 내용
+                    자동 제외, 어르신 원문 인용 그대로 유지.
+                  </p>
+                )}
+
+              {guardianReport?.guardianReport && (
+                <div className="mt-5 space-y-5 text-[15px] leading-[1.85] text-[#3f3a33]">
+                  {guardianReport.guardianReport
+                    .header?.greeting && (
+                    <p className="text-base font-semibold text-[#5e3f25]">
+                      {
+                        guardianReport
+                          .guardianReport.header
+                          .greeting
+                      }
+                    </p>
+                  )}
+
+                  {guardianReport.guardianReport
+                    .conversationOverview && (
+                    <div>
+                      <h3 className="text-sm font-bold uppercase tracking-wide text-[#a4814a]">
+                        오늘의 이야기
+                      </h3>
+                      <p className="mt-1 whitespace-pre-line">
+                        {
+                          guardianReport
+                            .guardianReport
+                            .conversationOverview
+                            .summary
+                        }
+                      </p>
+                      {(guardianReport
+                        .guardianReport
+                        .conversationOverview
+                        .mainTopics?.length ??
+                        0) > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {guardianReport.guardianReport.conversationOverview.mainTopics?.map(
+                            (topic) => (
+                              <span
+                                key={topic}
+                                className="rounded-full bg-[#f4eadb] px-3 py-1 text-xs font-semibold text-[#7c6857]"
+                              >
+                                #{topic}
+                              </span>
+                            )
+                          )}
+                        </div>
+                      )}
+                      {guardianReport
+                        .guardianReport
+                        .conversationOverview
+                        .duration && (
+                        <p className="mt-2 text-xs text-[#a39988]">
+                          {
+                            guardianReport
+                              .guardianReport
+                              .conversationOverview
+                              .duration
+                          }
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {guardianReport.guardianReport
+                    .emotionalStateScore && (
+                    <div className="rounded-2xl bg-white p-4 ring-1 ring-[#ede2c8]">
+                      <div className="flex items-baseline gap-3">
+                        <span className="text-3xl font-black text-[#a4814a]">
+                          {guardianReport
+                            .guardianReport
+                            .emotionalStateScore
+                            .score ?? 0}
+                        </span>
+                        <span className="text-xs text-[#a39988]">
+                          / 100
+                        </span>
+                        <span className="text-sm font-bold text-[#5e3f25]">
+                          {
+                            guardianReport
+                              .guardianReport
+                              .emotionalStateScore
+                              .label
+                          }
+                        </span>
+                      </div>
+                      <p className="mt-2">
+                        {
+                          guardianReport
+                            .guardianReport
+                            .emotionalStateScore
+                            .basis
+                        }
+                      </p>
+                      <p className="mt-2 text-xs text-[#a39988]">
+                        {
+                          guardianReport
+                            .guardianReport
+                            .emotionalStateScore
+                            .note
+                        }
+                      </p>
+                    </div>
+                  )}
+
+                  {(guardianReport.guardianReport
+                    .impressiveExcerpts?.length ??
+                    0) > 0 && (
+                    <div>
+                      <h3 className="text-sm font-bold uppercase tracking-wide text-[#a4814a]">
+                        인상 깊었던 순간
+                      </h3>
+                      <div className="mt-2 space-y-3">
+                        {guardianReport.guardianReport.impressiveExcerpts?.map(
+                          (excerpt, idx) => (
+                            <div
+                              key={idx}
+                              className="rounded-2xl bg-white p-4 ring-1 ring-[#ede2c8]"
+                            >
+                              {excerpt.context && (
+                                <p className="text-xs text-[#a39988]">
+                                  {
+                                    excerpt.context
+                                  }
+                                </p>
+                              )}
+                              {excerpt.elderlyQuote && (
+                                <p className="mt-1 border-l-2 border-[#c6e2c2] pl-3 italic text-[#2f4a2a]">
+                                  &quot;
+                                  {
+                                    excerpt.elderlyQuote
+                                  }
+                                  &quot;
+                                </p>
+                              )}
+                              {excerpt.significance && (
+                                <p className="mt-2 text-sm text-[#5e5148]">
+                                  {
+                                    excerpt.significance
+                                  }
+                                </p>
+                              )}
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {guardianReport.guardianReport
+                    .nextSessionPreview?.text && (
+                    <div>
+                      <h3 className="text-sm font-bold uppercase tracking-wide text-[#a4814a]">
+                        다음 시간
+                      </h3>
+                      <p className="mt-1">
+                        {
+                          guardianReport
+                            .guardianReport
+                            .nextSessionPreview
+                            .text
+                        }
+                      </p>
+                    </div>
+                  )}
+
+                  {guardianReport.guardianReport
+                    .closingNote && (
+                    <p className="border-t border-[#ede2c8] pt-4 text-[#7c6857]">
+                      {
+                        guardianReport
+                          .guardianReport
+                          .closingNote
+                      }
+                    </p>
+                  )}
+                </div>
+              )}
+            </section>
 
             {/* 전체 대화 */}
             <section className="mt-10 border-t-2 border-[#e6dfd2] pt-8">
