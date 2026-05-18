@@ -149,6 +149,13 @@ export default function StoryClientPage({
   const handleFinalTranscriptRef = useRef<
     (text: string) => Promise<void>
   >(async () => undefined);
+  /**
+   * VAD 가 침묵을 감지했을 때 자동으로 stopAndProcess 를 호출하기 위한 ref.
+   * stopAndProcess 는 speak 보다 뒤에 정의되어 stale closure 회피용.
+   */
+  const stopAndProcessRef = useRef<() => void>(
+    () => undefined
+  );
 
   /**
    * 서버 TTS (/api/tts) 로 mp3 받아 audio element 로 재생.
@@ -179,7 +186,7 @@ export default function StoryClientPage({
         advanced = true;
         setStatus("listening");
         // Web Speech 는 화면 미리보기, MediaRecorder 는 실제 chat 입력으로
-        // 보낼 정확한 audio 를 녹음.
+        // 보낼 정확한 audio 를 녹음 + VAD 로 침묵 감지 시 자동 stopAndProcess.
         startListening({
           onError: (message) => {
             setBrowserError(message);
@@ -187,7 +194,11 @@ export default function StoryClientPage({
           },
         });
         if (isRecorderSupported) {
-          void startRecording();
+          void startRecording({
+            onSilence: () => {
+              stopAndProcessRef.current();
+            },
+          });
         }
       };
 
@@ -433,6 +444,11 @@ export default function StoryClientPage({
     stopRecording,
   ]);
 
+  // VAD 가 침묵 감지 시 자동으로 stopAndProcess 를 호출할 수 있게 ref 동기화.
+  useEffect(() => {
+    stopAndProcessRef.current = stopAndProcess;
+  }, [stopAndProcess]);
+
   // 위험도 high 가 3회 누적되어 자동 일시중단된 상태인지.
   const isPausedForSafety =
     currentState.action === "stop_and_handoff" ||
@@ -494,7 +510,11 @@ export default function StoryClientPage({
         },
       });
       if (isRecorderSupported) {
-        void startRecording();
+        void startRecording({
+          onSilence: () => {
+            stopAndProcessRef.current();
+          },
+        });
       }
       return;
     }
