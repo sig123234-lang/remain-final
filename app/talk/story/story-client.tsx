@@ -19,8 +19,15 @@ import {
   getBodyTextClass,
   getQuestionTextClass,
   getSpeechRateValue,
-  pickPreferredVoice,
 } from "@/lib/preferences";
+
+/**
+ * 무음 0.5초 짜리 WAV (44 byte). 모바일 브라우저의 audio autoplay 정책
+ * 우회용: 첫 user gesture 안에서 audio element 에 대해 한 번 play() 를 호출
+ * 해두면 그 element 는 unlock 되어 이후 (async fetch 뒤) 에도 자유롭게 재생된다.
+ */
+const SILENT_WAV_DATA_URI =
+  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
 
 export default function StoryClientPage({
   elderId,
@@ -59,82 +66,111 @@ export default function StoryClientPage({
     useTalkPreferencesStore();
   const spokenCommandRef =
     useRef<string | null>(null);
-  /**
-   * processUserTurn 이 동시에 두 번 발화되지 않게 가드.
-   * - stop 버튼 + STT 자동 종료(onAutoStop) 가 거의 동시에 발생할 수 있음.
-   * - 이전엔 같은 답이 두 번 AI 로 전송돼 "반복 녹음" 처럼 보였다.
-   */
   const isProcessingTurnRef = useRef(false);
   const activeCommandId =
     currentState.activeCommandId;
   const hasSession = Boolean(sessionId);
 
-  /**
-   * iOS Safari / iPadOS / Samsung Internet 은 `speechSynthesis.speak()` 가
-   * user gesture 와 같은 task 에서 실행돼야 소리를 낸다. `await` 가 끼면
-   * activation 이 만료돼 에러 없이 무시된다.
-   */
-  const primeSpeechSynthesis = useCallback(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    if (!("speechSynthesis" in window)) {
-      return;
-    }
+  // 단일 <audio> 인스턴스를 재사용. 모바일 브라우저는 한 element 가
+  // user gesture 안에서 한 번이라도 play() 됐으면 그 element 는 unlock 된다.
+  const audioRef = useRef<HTMLAudioElement | null>(
+    null
+  );
+  const audioUnlockedRef = useRef(false);
+  // 현재 BlobURL — 새 발화 큐잉 시 revoke 해서 메모리 누수 막음.
+  const currentAudioUrlRef = useRef<string | null>(
+    null
+  );
+  // 현재 발화 cancel/race-condition 가드용 토큰.
+  const speakTokenRef = useRef(0);
 
-    // volume=0 으로 두면 Samsung 태블릿의 Android Chrome 이 utterance 를
-    // silently drop 하면서 큐 자체를 잠가버려, 뒤에 큐잉되는 진짜 발화도 무음.
-    // 0.01 = 사실상 안 들리지만 audio pipeline 은 정상 동작.
-    const primer = new SpeechSynthesisUtterance(
-      "."
-    );
-    primer.volume = 0.01;
-    primer.rate = 1;
-    primer.lang = "ko-KR";
+  const getAudio = useCallback(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    if (!audioRef.current) {
+      const audio = new Audio();
+      audio.preload = "auto";
+      audioRef.current = audio;
+    }
+    return audioRef.current;
+  }, []);
+
+  /**
+   * 모바일 autoplay 정책 우회. user gesture (탭) 안에서 동기 호출.
+   * 무음 WAV 를 한 번 재생해서 audio element 를 unlock 시킨다.
+   */
+  const unlockAudio = useCallback(() => {
+    if (audioUnlockedRef.current) return;
+    const audio = getAudio();
+    if (!audio) return;
     try {
-      window.speechSynthesis.speak(primer);
+      audio.src = SILENT_WAV_DATA_URI;
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {
+          /* unlock 실패해도 진짜 재생에서 다시 시도 */
+        });
+      }
+      audioUnlockedRef.current = true;
     } catch {
       /* noop */
     }
+  }, [getAudio]);
+
+  const releaseCurrentAudioUrl = useCallback(() => {
+    if (currentAudioUrlRef.current) {
+      URL.revokeObjectURL(currentAudioUrlRef.current);
+      currentAudioUrlRef.current = null;
+    }
   }, []);
 
-  // 큰 useCallback 사슬에서 `speak` 보다 `handleFinalTranscript` 가 먼저 정의돼야
-  // startListening 의 onAutoStop 콜백으로 넘길 수 있다. 그래서 ref 우회.
+  const cancelCurrentSpeech = useCallback(() => {
+    speakTokenRef.current += 1; // 진행 중인 speak 호출 무효화
+    const audio = audioRef.current;
+    if (audio) {
+      try {
+        audio.pause();
+      } catch {
+        /* noop */
+      }
+    }
+    releaseCurrentAudioUrl();
+  }, [releaseCurrentAudioUrl]);
+
+  // handleFinalTranscript 가 speak 보다 먼저 정의되어야 startListening 콜백으로
+  // 넘길 수 있어 ref 우회.
   const handleFinalTranscriptRef = useRef<
     (text: string) => Promise<void>
   >(async () => undefined);
 
+  /**
+   * 서버 TTS (/api/tts) 로 mp3 받아 audio element 로 재생.
+   * 기존 browser speechSynthesis 는 Samsung 태블릿 등 한국어 TTS voice 가
+   * 없는 device 에서 silently fail. OpenAI TTS 는 mp3 binary 라 어느 device 든 재생.
+   */
   const speak = useCallback(
-    (text: string) => {
+    async (text: string) => {
       if (typeof window === "undefined") {
-        return;
-      }
-      if (!("speechSynthesis" in window)) {
         return;
       }
       if (!text || !text.trim()) {
         return;
       }
 
-      const utterance = new SpeechSynthesisUtterance(
-        text
-      );
-
-      utterance.lang = "ko-KR";
-      utterance.rate = getSpeechRateValue(
-        preferences.speechRate
-      );
-      utterance.pitch = 1;
-
-      const preferredVoice = pickPreferredVoice(
-        preferences.voice
-      );
-
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
+      const audio = getAudio();
+      if (!audio) {
+        return;
       }
 
+      // 새 speak 호출은 이전 발화를 cancel. 토큰 증가시켜 이전 async 분기 무효화.
+      cancelCurrentSpeech();
+      const myToken = speakTokenRef.current;
+
+      let advanced = false;
       const advanceToListening = () => {
+        if (advanced) return;
+        advanced = true;
         setStatus("listening");
         startListening({
           onError: (message) => {
@@ -149,71 +185,127 @@ export default function StoryClientPage({
         });
       };
 
-      // 한 발화에 대해 listening 으로의 진입이 두 번 일어나지 않게 가드.
-      // (onend + onstart-timeout 둘 다 발동될 수 있음)
-      let advanced = false;
-      let onstartFired = false;
-      const advanceOnce = () => {
-        if (advanced) return;
-        advanced = true;
-        advanceToListening();
-      };
-
-      const showSilentTtsHint = () => {
+      const showFallbackHint = () => {
         setBrowserError(
-          "이 기기에서 음성이 안 들리는 것 같아요. 화면의 글을 보고 편하게 말씀해 주세요."
+          "음성이 잠시 나오지 않아요. 화면의 글을 보고 편하게 말씀해 주세요."
         );
       };
 
-      utterance.onstart = () => {
-        onstartFired = true;
-        if (advanced) return;
-        setStatus("speaking");
-      };
+      try {
+        const response = await fetch("/api/tts", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            text,
+            voice: preferences.voice,
+          }),
+        });
 
-      utterance.onend = () => {
-        advanceOnce();
-      };
-
-      utterance.onerror = () => {
-        // TTS 가 자체 에러로 실패 → 어르신이 왜 안 들리는지 알 수 있게 안내.
-        if (!advanced) showSilentTtsHint();
-        advanceOnce();
-      };
-
-      // ⚠️ 핵심 fallback. Samsung 태블릿처럼 한국어 TTS voice 가 없으면
-      // onstart 가 영원히 안 뜬다. 2.5초 안에 안 뜨면 silent fail 로 판단.
-      window.setTimeout(() => {
-        if (onstartFired || advanced) {
+        // 이 시점에 다른 speak() 가 시작됐다면 이 흐름 중단.
+        if (
+          myToken !== speakTokenRef.current
+        ) {
           return;
         }
-        showSilentTtsHint();
-        advanceOnce();
-      }, 2500);
 
-      // 발화가 너무 길거나 엔진이 onend 를 안 보내는 경우 안전망. 한국어
-      // 80자 문장이 가장 느린 rate 로도 ~15초 안에 끝나므로 30초면 충분.
-      window.setTimeout(advanceOnce, 30_000);
+        if (!response.ok) {
+          throw new Error(
+            `TTS HTTP ${response.status}`
+          );
+        }
 
-      try {
-        window.speechSynthesis.speak(utterance);
-      } catch {
-        // 일부 모바일 브라우저에서 speak() 가 throw. 그 즉시 listening 으로.
-        advanceOnce();
+        const blob = await response.blob();
+
+        if (
+          myToken !== speakTokenRef.current
+        ) {
+          return;
+        }
+
+        const url = URL.createObjectURL(blob);
+        // 이전 url 이 남아있으면 정리
+        releaseCurrentAudioUrl();
+        currentAudioUrlRef.current = url;
+
+        audio.src = url;
+        audio.playbackRate = getSpeechRateValue(
+          preferences.speechRate
+        );
+
+        const handleEnded = () => {
+          audio.onended = null;
+          audio.onerror = null;
+          audio.onplay = null;
+          releaseCurrentAudioUrl();
+          advanceToListening();
+        };
+
+        const handleError = () => {
+          audio.onended = null;
+          audio.onerror = null;
+          audio.onplay = null;
+          releaseCurrentAudioUrl();
+          if (!advanced) showFallbackHint();
+          advanceToListening();
+        };
+
+        audio.onplay = () => {
+          if (
+            myToken === speakTokenRef.current
+          ) {
+            setStatus("speaking");
+          }
+        };
+        audio.onended = handleEnded;
+        audio.onerror = handleError;
+
+        // 30초 안전망: 어떤 사유로든 onended/onerror 가 안 뜨면 강제 advance.
+        window.setTimeout(() => {
+          if (
+            myToken === speakTokenRef.current &&
+            !advanced
+          ) {
+            advanceToListening();
+          }
+        }, 30_000);
+
+        try {
+          await audio.play();
+        } catch (playError) {
+          // autoplay 차단 — 사용자에게 안내 후 listening 진입
+          console.warn(
+            "audio.play() rejected:",
+            playError
+          );
+          showFallbackHint();
+          advanceToListening();
+        }
+      } catch (fetchError) {
+        console.error(
+          "TTS fetch failed:",
+          fetchError
+        );
+        if (
+          myToken === speakTokenRef.current
+        ) {
+          showFallbackHint();
+          advanceToListening();
+        }
       }
     },
     [
+      cancelCurrentSpeech,
+      getAudio,
       preferences.speechRate,
       preferences.voice,
+      releaseCurrentAudioUrl,
       setStatus,
       startListening,
     ]
   );
 
-  /**
-   * 어르신 발화 한 turn 을 끝까지 처리. stop 버튼 / STT 자동 종료 둘 다 여기로 모인다.
-   * 동시 호출 방지 ref 로 한 turn 당 한 번만 실행.
-   */
   const handleFinalTranscript = useCallback(
     async (finalTranscript: string) => {
       if (isProcessingTurnRef.current) {
@@ -223,13 +315,11 @@ export default function StoryClientPage({
       const cleaned = finalTranscript.trim();
 
       if (!cleaned) {
-        // 침묵 또는 인식 실패 — 다시 들을 준비
         resetTranscript();
         setStatus("waiting");
         return;
       }
 
-      // 새 답변을 처리 시작하면 이전 안내(아직 화면에 남아있을 수 있는)는 지운다.
       setBrowserError(null);
       isProcessingTurnRef.current = true;
       setStatus("thinking");
@@ -241,7 +331,7 @@ export default function StoryClientPage({
         resetTranscript();
 
         if (result?.ttsText) {
-          speak(result.ttsText);
+          void speak(result.ttsText);
         } else {
           setStatus("waiting");
         }
@@ -252,8 +342,7 @@ export default function StoryClientPage({
             ? caughtError.message
             : "대화를 이어가지 못했어요."
         );
-
-        speak(
+        void speak(
           "잠시 연결이 불안정해요. 다시 한번 이야기해볼까요?"
         );
       } finally {
@@ -268,36 +357,30 @@ export default function StoryClientPage({
     ]
   );
 
-  // ref 에 최신 콜백 동기화 — speak 의 onend 가 capture 한 콜백이 stale 되지 않게.
   useEffect(() => {
     handleFinalTranscriptRef.current =
       handleFinalTranscript;
   }, [handleFinalTranscript]);
 
   const stopAndProcess = useCallback(() => {
-    primeSpeechSynthesis();
     const finalTranscript = stopListening();
     void handleFinalTranscript(finalTranscript);
-  }, [
-    handleFinalTranscript,
-    primeSpeechSynthesis,
-    stopListening,
-  ]);
+  }, [handleFinalTranscript, stopListening]);
 
   const handleVoiceButton = async () => {
     if (isLoading || isEndingSession) {
       return;
     }
 
-    // 모바일 TTS 활성화: 모든 분기 앞에 동기 prime.
-    primeSpeechSynthesis();
-    // 새 액션 시작 시 이전에 떠 있던 안내/에러는 정리한다.
+    // 모든 분기 진입 직전 동기로 audio unlock — 첫 탭이 user gesture 인 동안.
+    unlockAudio();
     setBrowserError(null);
 
     if (!sessionId) {
       setStatus("thinking");
 
-      speak(currentQuestion);
+      // 첫 질문은 default value 가 있으니 init 기다리지 않고 바로 호출.
+      void speak(currentQuestion);
 
       const nextSessionId =
         await initializeSession();
@@ -314,19 +397,18 @@ export default function StoryClientPage({
     }
 
     if (status === "waiting") {
-      speak(currentQuestion);
+      void speak(currentQuestion);
       return;
     }
 
     if (status === "speaking") {
-      window.speechSynthesis.cancel();
+      cancelCurrentSpeech();
       if (!isSupported) {
         setBrowserError(
           "이 브라우저에서는 음성 인식이 지원되지 않아요."
         );
         return;
       }
-      setBrowserError(null);
       setStatus("listening");
       startListening({
         onError: (message) => {
@@ -359,17 +441,13 @@ export default function StoryClientPage({
       return;
     }
 
-    // 진행 중인 음성 인식/합성 정리
-    if (typeof window !== "undefined") {
-      window.speechSynthesis.cancel();
-    }
+    cancelCurrentSpeech();
     stopListening();
     resetTranscript();
     setStatus("thinking");
 
     try {
       await finalizeSession();
-      // 종료 후 기록 화면으로 이동
       const target = elderId
         ? `/talk/records?elderId=${elderId}`
         : "/talk/records";
@@ -385,33 +463,20 @@ export default function StoryClientPage({
   };
 
   useEffect(() => {
-    // 일부 브라우저(Samsung Internet, 일부 Android Chrome)는 첫 getVoices() 가
-    // 빈 배열을 반환하고 voiceschanged 이벤트 후에야 채워진다. 마운트 즉시
-    // 호출해서 비동기 로딩을 시작해 두면, 사용자가 음성 버튼을 탭할 때쯤
-    // 한국어 voice 가 준비돼 있을 가능성이 높아진다.
-    if (
-      typeof window !== "undefined" &&
-      "speechSynthesis" in window
-    ) {
-      window.speechSynthesis.getVoices();
-    }
-
     return () => {
-      if (typeof window !== "undefined") {
-        window.speechSynthesis.cancel();
-      }
+      cancelCurrentSpeech();
     };
-  }, []);
+  }, [cancelCurrentSpeech]);
 
   useEffect(() => {
-    if (
-      sessionStatus === "active" ||
-      typeof window === "undefined"
-    ) {
+    if (sessionStatus === "active") {
       return;
     }
-    window.speechSynthesis.cancel();
-  }, [sessionStatus]);
+    cancelCurrentSpeech();
+  }, [
+    cancelCurrentSpeech,
+    sessionStatus,
+  ]);
 
   useEffect(() => {
     if (
@@ -427,7 +492,7 @@ export default function StoryClientPage({
 
     spokenCommandRef.current = activeCommandId;
     setTimeout(() => {
-      speak(currentQuestion);
+      void speak(currentQuestion);
     }, 300);
   }, [
     currentQuestion,
@@ -454,7 +519,6 @@ export default function StoryClientPage({
 
   return (
     <div className="min-h-[100dvh] bg-[radial-gradient(circle_at_top,#fff4e5_0%,#f6ead9_45%,#edf3e8_100%)] text-[#3d3128]">
-      {/* 스크롤 가능 영역. 하단의 fixed 컨트롤 (voice+종료+BottomTab) 만큼 패딩 */}
       <div className="mx-auto flex max-w-md flex-col px-6 pt-6 pb-[260px]">
         <Header subtitle="편안하게 이야기를 이어가볼까요?" />
 
@@ -504,7 +568,6 @@ export default function StoryClientPage({
         </main>
       </div>
 
-      {/* 하단 고정 컨트롤: 큰 음성 버튼 + 종료 버튼. BottomTab 위에 안전하게 layered */}
       <div className="fixed bottom-[88px] left-0 right-0 z-40 px-6">
         <div className="mx-auto max-w-md space-y-3">
           <VoiceActionButton
