@@ -12,8 +12,8 @@ export default function VoiceActionButton({
   const label = {
     waiting: "대화 시작하기",
     speaking: "말 끊고 답하기",
-    // free-talking 흐름: 정지 버튼 누를 필요 없이 침묵을 자동 감지해 넘어감.
-    listening: "말씀하시면 듣고 있어요",
+    // 자동 침묵 감지로 다음 턴으로 넘어가지만, 어르신이 직접 누르면 즉시 마침.
+    listening: "다 말씀하셨으면 눌러주세요",
     thinking: "생각하고 있어요",
   };
 
@@ -38,12 +38,10 @@ export default function VoiceActionButton({
           }
         `}</style>
 
-        {/* free-talking 흐름: 침묵을 자동 감지해 다음 턴으로 넘어가므로 정지 버튼이
-            필요 없다. listening 상태는 시각 표시기 + 안내 텍스트로 충분.
-            disabled 로 두어 어르신이 실수로 눌러도 흐름이 깨지지 않게. */}
-        <div
-          aria-label="듣고 있는 중"
-          className="relative flex h-28 w-full items-center justify-between overflow-hidden rounded-[36px] bg-[#8ba77c] px-7 text-white shadow-[0_22px_50px_rgba(99,125,86,0.34)] ring-2 ring-white/40"
+        <button
+          onClick={onClick}
+          aria-label="듣고 있는 중 — 누르면 바로 마칠 수 있어요"
+          className="relative flex h-28 w-full items-center justify-between overflow-hidden rounded-[36px] bg-[#8ba77c] px-7 text-white shadow-[0_22px_50px_rgba(99,125,86,0.34)] ring-2 ring-white/40 active:scale-[0.99]"
         >
           <div className="absolute inset-0 opacity-40">
             <div className="absolute left-[-40%] top-0 h-full w-[80%] animate-[waveMove_2.3s_linear_infinite] rounded-full bg-white/40 blur-xl" />
@@ -66,10 +64,10 @@ export default function VoiceActionButton({
             {label.listening}
             <br />
             <span className="text-[12px] font-semibold opacity-90">
-              잠깐 멈추시면 다음 질문이 나와요
+              잠깐 멈추셔도 다음으로 넘어가요
             </span>
           </span>
-        </div>
+        </button>
       </>
     );
   }
